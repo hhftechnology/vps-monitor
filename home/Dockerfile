@@ -1,59 +1,54 @@
-# home/Dockerfile
-
 # ---- Build Stage 1: Frontend ----
 # Build the React application first.
 FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app/web
 
-# Copy package.json and install dependencies.
+# Install dependencies first (better cache)
 COPY web/package.json web/package-lock.json ./
-RUN npm install
+RUN npm ci --legacy-peer-deps
 
-# Add execute permissions to the react-scripts binary.
-
-RUN chmod +x ./node_modules/.bin/react-scripts
-
-# Copy the rest of the frontend code.
+# Copy the rest of the frontend code
 COPY web/ ./
 
-# Build the production-ready static files.
+# Build production static files
 RUN npm run build
 
+
 # ---- Build Stage 2: Backend ----
-# Build the Go backend.
+# Build the Go backend
 FROM golang:1.21-alpine AS backend-builder
 
 WORKDIR /app
 
-# Copy Go module files and download dependencies.
+# Copy Go module files and download deps
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the backend source code.
-COPY main.go .
+# Copy backend source
+COPY main.go ./
 
-# Build the Go application.
+# Build Go binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /home-server-binary .
 
+
 # ---- Final Stage ----
-# Create the final, lightweight image.
 FROM alpine:latest
 
 WORKDIR /app
 
-# Copy the built Go binary from the backend-builder stage.
+# Copy Go binary
 COPY --from=backend-builder /home-server-binary /app/home-server
 
-# Copy the built React app from the frontend-builder stage.
+# Copy frontend build output
 COPY --from=frontend-builder /app/web/build /app/web/build
 
-# Expose the port the server will run on.
-EXPOSE 8080
-
-# Set a non-root user for security.
+# Security: run as non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
-# Command to run the server.
+# Expose server port
+EXPOSE 8080
+
+# Run server
 CMD ["/app/home-server"]
