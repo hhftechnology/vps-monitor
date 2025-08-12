@@ -3,7 +3,7 @@
 A lightweight, **Go-based VPS monitoring solution** with real-time web dashboard supporting **multiple agents**.  
 Monitor unlimited servers from a single dashboard with individual agent views and overview analytics.
 
-
+![Screanshot](image.png)
 ---
 
 ##  Features
