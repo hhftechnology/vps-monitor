@@ -32,7 +32,7 @@ Run a tiny **agent** on your VPS and a **home server** locally or remotely to vi
       +-----------------------+
       |      Home Server      |
       |   (Local or Remote)   |
-      |  Web UI on port 8080  |
+      |  Web UI on port 8085  |
       +-----------+-----------+
                   ^
                   |
@@ -62,14 +62,14 @@ services:
   home-server:
     image: hhftechnology/vps-monitor-home:latest
     ports:
-      - "8080:8080"
+      - "8085:8085"
     container_name: vps_monitor_home
     restart: unless-stopped
 
   agent:
     image: hhftechnology/vps-monitor-agent:latest
     environment:
-      - HOME_SERVER_URL=http://home-server:8080
+      - HOME_SERVER_URL=http://home-server:8085
     container_name: vps_monitor_agent
     depends_on:
       - home-server
@@ -85,7 +85,7 @@ docker compose up -d
 Access:
 
 ```
-http://<your-vps-ip>:8080
+http://<your-vps-ip>:8085
 ```
 
 ---
@@ -102,7 +102,7 @@ services:
   home-server:
     image: hhftechnology/vps-monitor-home:latest
     expose:
-      - "8080"
+      - "8085"
     container_name: vps_monitor_home
     restart: unless-stopped
 ```
@@ -112,7 +112,7 @@ docker compose up -d
 ```
 
 Expose with **Pangolin**:
-Create a resource pointing to port `8080` of `home-server`, giving you:
+Create a resource pointing to port `8085` of `home-server`, giving you:
 
 ```
 https://monitor.your-domain.com

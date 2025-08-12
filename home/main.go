@@ -51,8 +51,8 @@ func main() {
 	// Start the broadcast loop in a separate goroutine.
 	go handleBroadcast()
 
-	log.Println("Home server starting on :8080")
-	router.Run(":8080")
+	log.Println("Home server starting on :8085")
+	router.Run(":8085")
 }
 
 // handleMetricsPost handles incoming data from the agent.

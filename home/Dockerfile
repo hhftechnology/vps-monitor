@@ -48,7 +48,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
 # Expose server port
-EXPOSE 8080
+EXPOSE 8085
 
 # Run server
 CMD ["/app/home-server"]
