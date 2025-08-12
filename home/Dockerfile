@@ -1,6 +1,6 @@
 # ---- Build Stage 1: Frontend ----
 # Build the React application first.
-FROM node:18-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 
 WORKDIR /app/web
 
@@ -17,7 +17,7 @@ RUN npm run build
 
 # ---- Build Stage 2: Backend ----
 # Build the Go backend
-FROM golang:1.21-alpine AS backend-builder
+FROM golang:1.22-alpine AS backend-builder
 
 WORKDIR /app
 
