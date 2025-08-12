@@ -11,7 +11,7 @@ A lightweight, real-time multi-agent server monitoring system with a modern web 
 - **Docker Integration**: Monitor Docker containers with detailed stats
 - **Process Monitoring**: View top processes with CPU and memory usage
 - **Modern UI**: Dark theme with responsive design and live updates
-- **Lightweight**: Minimal resource usage (< 64MB RAM per agent)
+- **Lightweight**: Minimal resource usage (<26MB RAM per agent)
 - **Easy Deployment**: Single Docker Compose file deployment
 - **Host System Access**: Full visibility into host processes and Docker containers
 
