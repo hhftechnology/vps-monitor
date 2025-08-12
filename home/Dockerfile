@@ -1,15 +1,19 @@
+# home/Dockerfile
+# This Dockerfile expects to be built from the project root directory
+# Build command: docker build -f home/Dockerfile -t vps-monitor-home .
+
 # ---- Build Stage 1: Frontend ----
 FROM node:22-alpine AS frontend-builder
 
 # Set working directory
 WORKDIR /app/web
 
-# Install dependencies first for better caching
-COPY web/package*.json ./
+# Copy package files first for better caching
+COPY home/web/package*.json ./
 RUN npm ci --only=production --silent
 
 # Copy frontend source code
-COPY web/ ./
+COPY home/web/ ./
 
 # Build production static files
 RUN npm run build && \
@@ -26,11 +30,11 @@ RUN apk add --no-cache git ca-certificates
 WORKDIR /app
 
 # Copy Go module files and download dependencies
-COPY go.mod go.sum ./
+COPY home/go.mod home/go.sum ./
 RUN go mod download
 
 # Copy backend source
-COPY main.go ./
+COPY home/main.go ./
 
 # Build Go binary with optimizations
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
