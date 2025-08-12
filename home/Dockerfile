@@ -10,6 +10,10 @@ WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm install
 
+# Add execute permissions to the react-scripts binary.
+
+RUN chmod +x ./node_modules/.bin/react-scripts
+
 # Copy the rest of the frontend code.
 COPY web/ ./
 
