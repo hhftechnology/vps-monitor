@@ -6,7 +6,7 @@ WORKDIR /app/web
 
 # Install dependencies first (better cache)
 COPY web/package.json web/package-lock.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm install
 
 # Copy the rest of the frontend code
 COPY web/ ./
