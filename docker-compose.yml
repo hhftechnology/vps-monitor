@@ -1,0 +1,79 @@
+services:
+  home-server:
+    image: hhftechnology/vps-monitor-home:latest
+    container_name: vps_monitor_home
+    ports:
+      - "8085:8085"
+    environment:
+      - GIN_MODE=release
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8085/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - vps_monitor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+  # Agent 1 - Local monitoring
+  agent-local:
+    image: hhftechnology/vps-monitor-agent:latest
+    container_name: vps_monitor_agent_local
+    environment:
+      - HOME_SERVER_URL=http://home-server:8085
+      - AGENT_NAME=Local-Server
+      # Optional: Set custom agent ID
+      # - AGENT_ID=local-001
+    depends_on:
+      home-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vps_monitor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 16M
+
+  # Example: Agent 2 - Uncomment for multi-agent local testing
+  # agent-local-2:
+  #   image: hhftechnology/vps-monitor-agent:latest
+  #   container_name: vps_monitor_agent_local_2
+  #   environment:
+  #     - HOME_SERVER_URL=http://home-server:8085
+  #     - AGENT_NAME=Local-Server-2
+  #     - AGENT_ID=local-002
+  #   depends_on:
+  #     home-server:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   networks:
+  #     - vps_monitor
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.2'
+  #         memory: 64M
+  #       reservations:
+  #         cpus: '0.05'
+  #         memory: 16M
+
+networks:
+  vps_monitor:
+    driver: bridge
+
+# For development: Override with docker-compose.dev.yml
+# docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
