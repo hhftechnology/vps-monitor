@@ -1,6 +1,4 @@
 # home/Dockerfile
-# This Dockerfile expects to be built from the project root directory
-# Build command: docker build -f home/Dockerfile -t vps-monitor-home .
 
 # ---- Build Stage 1: Frontend ----
 FROM node:22-alpine AS frontend-builder
@@ -10,7 +8,7 @@ WORKDIR /app/web
 
 # Copy package files first for better caching
 COPY home/web/package*.json ./
-RUN npm ci --only=production --silent
+RUN npm install
 
 # Copy frontend source code
 COPY home/web/ ./
