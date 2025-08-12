@@ -2,19 +2,34 @@
 package main
 
 import (
-
 	"log"
 	"net/http"
 	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v3/net"
 )
 
-// Metrics holds the structure for incoming data from the agent.
+// ProcessInfo holds simplified information about a running process.
+type ProcessInfo struct {
+	PID           int32   `json:"pid"`
+	Name          string  `json:"name"`
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryPercent float32 `json:"memory_percent"`
+}
+
+// Metrics holds all the system metrics we want to collect.
 type Metrics struct {
-	Hostname  string `json:"hostname"`
-	// Add all other fields from the agent's Metric struct here
+	Hostname  string                   `json:"hostname"`
+	Uptime    uint64                   `json:"uptime"`
+	CPUUsage  float64                  `json:"cpu_usage"`
+	Memory    *mem.VirtualMemoryStat   `json:"memory"`
+	Disk      *disk.UsageStat          `json:"disk"`
+	Network   []net.IOCountersStat     `json:"network"`
+	Processes []*ProcessInfo           `json:"processes"`
 }
 
 var (
@@ -39,20 +54,24 @@ var (
 func main() {
 	router := gin.Default()
 
-	// API endpoint for the agent to post data to.
-	router.POST("/api/metrics", handleMetricsPost)
+	// Group all API routes under /api
+	api := router.Group("/api")
+	{
+		// API endpoint for the agent to post data to.
+		api.POST("/metrics", handleMetricsPost)
 
-	// WebSocket endpoint for the frontend to connect to.
-	router.GET("/ws", handleWebSocket)
+		// WebSocket endpoint for the frontend to connect to.
+		api.GET("/ws", handleWebSocket)
+	}
 
-	// Serve the static frontend files.
+	// Serve the static frontend files. This must be after the API routes.
 	router.Static("/", "./web/build")
 
 	// Start the broadcast loop in a separate goroutine.
 	go handleBroadcast()
 
-	log.Println("Home server starting on :8085")
-	router.Run(":8085")
+	log.Println("Home server starting on :8085") 
+	router.Run(":8085") // Start the server on port 8085
 }
 
 // handleMetricsPost handles incoming data from the agent.
