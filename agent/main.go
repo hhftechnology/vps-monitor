@@ -9,8 +9,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
+	"sort"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,7 +36,9 @@ type Metrics struct {
 	Disk          *disk.UsageStat        `json:"disk"`
 	Network       []net.IOCountersStat   `json:"network"`
 	Processes     []*ProcessInfo         `json:"processes"`
+	DockerStats   []*DockerContainerStat `json:"docker_stats"`
 	AgentInfo     *AgentInfo             `json:"agent_info"`
+	SystemInfo    *SystemInfo            `json:"system_info"`
 }
 
 // ProcessInfo holds simplified information about a running process.
@@ -41,6 +47,30 @@ type ProcessInfo struct {
 	Name          string  `json:"name"`
 	CPUPercent    float64 `json:"cpu_percent"`
 	MemoryPercent float32 `json:"memory_percent"`
+	MemoryMB      float64 `json:"memory_mb"`
+	Command       string  `json:"command"`
+}
+
+// DockerContainerStat holds Docker container statistics
+type DockerContainerStat struct {
+	ContainerID   string  `json:"container_id"`
+	Name          string  `json:"name"`
+	CPUPercent    string  `json:"cpu_percent"`
+	MemoryUsage   string  `json:"memory_usage"`
+	MemoryLimit   string  `json:"memory_limit"`
+	MemoryPercent string  `json:"memory_percent"`
+	NetworkIO     string  `json:"network_io"`
+	BlockIO       string  `json:"block_io"`
+	PIDs          string  `json:"pids"`
+}
+
+// SystemInfo holds additional system information
+type SystemInfo struct {
+	TotalProcesses   int    `json:"total_processes"`
+	DockerAvailable  bool   `json:"docker_available"`
+	KernelVersion    string `json:"kernel_version"`
+	OSRelease        string `json:"os_release"`
+	Architecture     string `json:"architecture"`
 }
 
 // AgentInfo holds information about the agent itself
@@ -220,23 +250,115 @@ func (a *Agent) collectMetrics() (*Metrics, error) {
 		processes = []*ProcessInfo{} // Continue without process data
 	}
 
+	dockerStats := a.getDockerStats()
+	systemInfo := a.getSystemInfo()
 	agentInfo := a.getAgentInfo()
 
 	return &Metrics{
-		AgentID:   a.agentID,
-		Hostname:  a.hostname,
-		Uptime:    hostInfo.Uptime,
-		CPUUsage:  cpuUsage[0],
-		Memory:    memory,
-		Disk:      diskUsage,
-		Network:   network,
-		Processes: processes,
-		AgentInfo: agentInfo,
+		AgentID:     a.agentID,
+		Hostname:    a.hostname,
+		Uptime:      hostInfo.Uptime,
+		CPUUsage:    cpuUsage[0],
+		Memory:      memory,
+		Disk:        diskUsage,
+		Network:     network,
+		Processes:   processes,
+		DockerStats: dockerStats,
+		SystemInfo:  systemInfo,
+		AgentInfo:   agentInfo,
 	}, nil
 }
 
-// getProcessList gets a list of running processes.
+// getProcessList gets a list of running processes using multiple methods
 func (a *Agent) getProcessList() ([]*ProcessInfo, error) {
+	var processes []*ProcessInfo
+	
+	// Method 1: Try using ps command for more comprehensive process list
+	if psProcesses := a.getProcessesFromPS(); len(psProcesses) > 0 {
+		processes = psProcesses
+	} else {
+		// Method 2: Fallback to gopsutil
+		psutilProcesses, err := a.getProcessesFromPsutil()
+		if err != nil {
+			return nil, err
+		}
+		processes = psutilProcesses
+	}
+
+	// Sort by CPU usage (descending)
+	sort.Slice(processes, func(i, j int) bool {
+		return processes[i].CPUPercent > processes[j].CPUPercent
+	})
+
+	// Limit to top 30 processes
+	if len(processes) > 30 {
+		processes = processes[:30]
+	}
+
+	return processes, nil
+}
+
+// getProcessesFromPS gets processes using ps command
+func (a *Agent) getProcessesFromPS() []*ProcessInfo {
+	cmd := exec.Command("ps", "aux", "--no-headers")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("Failed to run ps command: %v", err)
+		return nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	var processes []*ProcessInfo
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 11 {
+			continue
+		}
+
+		// Parse PID
+		pid, err := strconv.ParseInt(fields[1], 10, 32)
+		if err != nil {
+			continue
+		}
+
+		// Parse CPU percentage
+		cpuPercent, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			cpuPercent = 0
+		}
+
+		// Parse memory percentage
+		memPercent, err := strconv.ParseFloat(fields[3], 32)
+		if err != nil {
+			memPercent = 0
+		}
+
+		// Process name and command
+		command := strings.Join(fields[10:], " ")
+		name := fields[10]
+		if len(name) > 50 {
+			name = name[:50] + "..."
+		}
+
+		processes = append(processes, &ProcessInfo{
+			PID:           int32(pid),
+			Name:          name,
+			CPUPercent:    cpuPercent,
+			MemoryPercent: float32(memPercent),
+			Command:       command,
+		})
+	}
+
+	return processes
+}
+
+// getProcessesFromPsutil gets processes using gopsutil (fallback)
+func (a *Agent) getProcessesFromPsutil() ([]*ProcessInfo, error) {
 	pids, err := process.Pids()
 	if err != nil {
 		return nil, err
@@ -244,7 +366,7 @@ func (a *Agent) getProcessList() ([]*ProcessInfo, error) {
 
 	var processes []*ProcessInfo
 	processCount := 0
-	maxProcesses := 30 // Limit to top 30 processes
+	maxProcesses := 50
 
 	for _, pid := range pids {
 		if processCount >= maxProcesses {
@@ -253,7 +375,7 @@ func (a *Agent) getProcessList() ([]*ProcessInfo, error) {
 
 		p, err := process.NewProcess(pid)
 		if err != nil {
-			continue // Process might have terminated
+			continue
 		}
 
 		name, err := p.Name()
@@ -271,16 +393,123 @@ func (a *Agent) getProcessList() ([]*ProcessInfo, error) {
 			memPercent = 0
 		}
 
+		memInfo, _ := p.MemoryInfo()
+		memoryMB := float64(0)
+		if memInfo != nil {
+			memoryMB = float64(memInfo.RSS) / 1024 / 1024
+		}
+
+		cmdline, _ := p.Cmdline()
+
 		processes = append(processes, &ProcessInfo{
 			PID:           pid,
 			Name:          name,
 			CPUPercent:    cpuPercent,
 			MemoryPercent: memPercent,
+			MemoryMB:      memoryMB,
+			Command:       cmdline,
 		})
 		processCount++
 	}
 
 	return processes, nil
+}
+
+// getDockerStats gets Docker container statistics
+func (a *Agent) getDockerStats() []*DockerContainerStat {
+	cmd := exec.Command("docker", "stats", "--no-stream", "--format", 
+		"table {{.Container}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}")
+	
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("Docker not available or failed to get stats: %v", err)
+		return []*DockerContainerStat{}
+	}
+
+	lines := strings.Split(string(output), "\n")
+	var dockerStats []*DockerContainerStat
+
+	// Skip header line
+	for i, line := range lines {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
+		}
+
+		// Parse memory usage
+		memUsage := strings.Split(fields[3], "/")
+		memoryUsage := fields[3]
+		memoryLimit := ""
+		if len(memUsage) == 2 {
+			memoryUsage = strings.TrimSpace(memUsage[0])
+			memoryLimit = strings.TrimSpace(memUsage[1])
+		}
+
+		dockerStats = append(dockerStats, &DockerContainerStat{
+			ContainerID:   fields[0],
+			Name:          fields[1],
+			CPUPercent:    fields[2],
+			MemoryUsage:   memoryUsage,
+			MemoryLimit:   memoryLimit,
+			MemoryPercent: fields[4],
+			NetworkIO:     fields[5],
+			BlockIO:       fields[6],
+			PIDs:          fields[7],
+		})
+	}
+
+	return dockerStats
+}
+
+// getSystemInfo gets additional system information
+func (a *Agent) getSystemInfo() *SystemInfo {
+	// Get total process count
+	totalProcesses := 0
+	if cmd := exec.Command("ps", "-e", "--no-headers"); cmd != nil {
+		if output, err := cmd.Output(); err == nil {
+			totalProcesses = len(strings.Split(strings.TrimSpace(string(output)), "\n"))
+		}
+	}
+
+	// Check if Docker is available
+	dockerAvailable := false
+	if cmd := exec.Command("docker", "version"); cmd != nil {
+		if err := cmd.Run(); err == nil {
+			dockerAvailable = true
+		}
+	}
+
+	// Get kernel version
+	kernelVersion := ""
+	if cmd := exec.Command("uname", "-r"); cmd != nil {
+		if output, err := cmd.Output(); err == nil {
+			kernelVersion = strings.TrimSpace(string(output))
+		}
+	}
+
+	// Get OS release
+	osRelease := ""
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "PRETTY_NAME=") {
+				osRelease = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), `"`)
+				break
+			}
+		}
+	}
+
+	return &SystemInfo{
+		TotalProcesses:  totalProcesses,
+		DockerAvailable: dockerAvailable,
+		KernelVersion:   kernelVersion,
+		OSRelease:       osRelease,
+		Architecture:    runtime.GOARCH,
+	}
 }
 
 // getAgentInfo gets information about the agent itself
@@ -331,7 +560,8 @@ func (a *Agent) sendMetrics(metrics *Metrics) error {
 		return fmt.Errorf("server returned status: %d", resp.StatusCode)
 	}
 
-	log.Printf("[%s] Successfully sent metrics (CPU: %.1f%%, Memory: %.1f%%, Disk: %.1f%%)", 
-		a.agentID, metrics.CPUUsage, metrics.Memory.UsedPercent, metrics.Disk.UsedPercent)
+	log.Printf("[%s] Successfully sent metrics (CPU: %.1f%%, Memory: %.1f%%, Disk: %.1f%%, Processes: %d, Docker: %d)", 
+		a.agentID, metrics.CPUUsage, metrics.Memory.UsedPercent, metrics.Disk.UsedPercent, 
+		len(metrics.Processes), len(metrics.DockerStats))
 	return nil
 }

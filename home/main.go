@@ -26,6 +26,30 @@ type ProcessInfo struct {
 	Name          string  `json:"name"`
 	CPUPercent    float64 `json:"cpu_percent"`
 	MemoryPercent float32 `json:"memory_percent"`
+	MemoryMB      float64 `json:"memory_mb"`
+	Command       string  `json:"command"`
+}
+
+// DockerContainerStat holds Docker container statistics
+type DockerContainerStat struct {
+	ContainerID   string `json:"container_id"`
+	Name          string `json:"name"`
+	CPUPercent    string `json:"cpu_percent"`
+	MemoryUsage   string `json:"memory_usage"`
+	MemoryLimit   string `json:"memory_limit"`
+	MemoryPercent string `json:"memory_percent"`
+	NetworkIO     string `json:"network_io"`
+	BlockIO       string `json:"block_io"`
+	PIDs          string `json:"pids"`
+}
+
+// SystemInfo holds additional system information
+type SystemInfo struct {
+	TotalProcesses  int    `json:"total_processes"`
+	DockerAvailable bool   `json:"docker_available"`
+	KernelVersion   string `json:"kernel_version"`
+	OSRelease       string `json:"os_release"`
+	Architecture    string `json:"architecture"`
 }
 
 // AgentInfo holds information about the agent itself
@@ -34,40 +58,45 @@ type AgentInfo struct {
 	GoVersion     string            `json:"go_version"`
 	NumGoroutines int               `json:"num_goroutines"`
 	MemStats      map[string]uint64 `json:"mem_stats"`
+	StartTime     time.Time         `json:"start_time"`
 }
 
 // Metrics holds all the system metrics we want to collect.
 type Metrics struct {
-	AgentID       string                   `json:"agent_id"`
-	Hostname      string                   `json:"hostname"`
-	Uptime        uint64                   `json:"uptime"`
-	CPUUsage      float64                  `json:"cpu_usage"`
-	Memory        *mem.VirtualMemoryStat   `json:"memory"`
-	Disk          *disk.UsageStat          `json:"disk"`
-	Network       []net.IOCountersStat     `json:"network"`
-	Processes     []*ProcessInfo           `json:"processes"`
-	AgentInfo     *AgentInfo               `json:"agent_info"`
-	Timestamp     time.Time                `json:"timestamp"`
-	LastSeen      time.Time                `json:"last_seen"`
+	AgentID     string                   `json:"agent_id"`
+	Hostname    string                   `json:"hostname"`
+	Uptime      uint64                   `json:"uptime"`
+	CPUUsage    float64                  `json:"cpu_usage"`
+	Memory      *mem.VirtualMemoryStat   `json:"memory"`
+	Disk        *disk.UsageStat          `json:"disk"`
+	Network     []net.IOCountersStat     `json:"network"`
+	Processes   []*ProcessInfo           `json:"processes"`
+	DockerStats []*DockerContainerStat   `json:"docker_stats"`
+	AgentInfo   *AgentInfo               `json:"agent_info"`
+	SystemInfo  *SystemInfo              `json:"system_info"`
+	Timestamp   time.Time                `json:"timestamp"`
+	LastSeen    time.Time                `json:"last_seen"`
 }
 
 // AgentSummary provides overview information about an agent
 type AgentSummary struct {
-	AgentID     string    `json:"agent_id"`
-	Hostname    string    `json:"hostname"`
-	LastSeen    time.Time `json:"last_seen"`
-	IsOnline    bool      `json:"is_online"`
-	CPUUsage    float64   `json:"cpu_usage"`
-	MemoryUsage float64   `json:"memory_usage"`
-	DiskUsage   float64   `json:"disk_usage"`
-	Uptime      uint64    `json:"uptime"`
+	AgentID       string    `json:"agent_id"`
+	Hostname      string    `json:"hostname"`
+	LastSeen      time.Time `json:"last_seen"`
+	IsOnline      bool      `json:"is_online"`
+	CPUUsage      float64   `json:"cpu_usage"`
+	MemoryUsage   float64   `json:"memory_usage"`
+	DiskUsage     float64   `json:"disk_usage"`
+	Uptime        uint64    `json:"uptime"`
+	ProcessCount  int       `json:"process_count"`
+	DockerCount   int       `json:"docker_count"`
 }
 
 // MultiAgentData contains data for all agents
 type MultiAgentData struct {
-	Agents   map[string]*Metrics `json:"agents"`
-	Summary  []*AgentSummary     `json:"summary"`
-	Timestamp time.Time          `json:"timestamp"`
+	Agents    map[string]*Metrics `json:"agents"`
+	Summary   []*AgentSummary     `json:"summary"`
+	Timestamp time.Time           `json:"timestamp"`
 }
 
 var (
@@ -76,8 +105,6 @@ var (
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			// Allow all connections for simplicity. In production, you'd want to
-			// restrict this to your frontend's domain.
 			return true
 		},
 	}
@@ -88,32 +115,22 @@ var (
 	// clients is a map of all active WebSocket clients.
 	clients = make(map[*websocket.Conn]bool)
 	// broadcast is a channel to send metrics to all connected clients.
-	broadcast = make(chan *MultiAgentData, 10) // Buffered channel
+	broadcast = make(chan *MultiAgentData, 10)
 	// Agent timeout duration
 	agentTimeout = 2 * time.Minute
 )
 
 func main() {
-	// Set Gin to release mode
 	gin.SetMode(gin.ReleaseMode)
-	
 	router := gin.New()
-	
-	// Add middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 	router.Use(corsMiddleware())
 
-	// Group all API routes under /api
 	api := router.Group("/api")
 	{
-		// API endpoint for the agent to post data to.
 		api.POST("/metrics", handleMetricsPost)
-
-		// WebSocket endpoint for the frontend to connect to.
 		api.GET("/ws", handleWebSocket)
-		
-		// Health check endpoint
 		api.GET("/health", func(c *gin.Context) {
 			mu.RLock()
 			agentCount := len(agentMetrics)
@@ -133,24 +150,14 @@ func main() {
 				},
 			})
 		})
-		
-		// Get list of all agents
 		api.GET("/agents", handleGetAgents)
-		
-		// Get specific agent data
 		api.GET("/agents/:agentId", handleGetAgent)
 	}
 
-	// Serve static files with custom handler to avoid route conflicts
 	router.Use(staticFileHandler("./web/build"))
-
-	// Start the broadcast loop in a separate goroutine.
 	go handleBroadcast()
-	
-	// Start agent cleanup routine
 	go agentCleanupRoutine()
 
-	// Setup graceful shutdown
 	srv := &http.Server{
 		Addr:         ":8085",
 		Handler:      router,
@@ -159,7 +166,6 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in a goroutine
 	go func() {
 		log.Println("Home server starting on :8085")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -167,17 +173,14 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down server...")
 
-	// Give a 30-second timeout for graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Close all WebSocket connections
 	for client := range clients {
 		client.Close()
 	}
@@ -189,7 +192,6 @@ func main() {
 	log.Println("Server exited")
 }
 
-// corsMiddleware adds CORS headers
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
@@ -206,32 +208,26 @@ func corsMiddleware() gin.HandlerFunc {
 	}
 }
 
-// staticFileHandler serves static files only if the path doesn't start with /api
 func staticFileHandler(root string) gin.HandlerFunc {
 	fileServer := http.FileServer(http.Dir(root))
 	
 	return func(c *gin.Context) {
-		// Skip if this is an API route
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
 			c.Next()
 			return
 		}
 
-		// Check if file exists
 		path := filepath.Join(root, c.Request.URL.Path)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// If file doesn't exist, serve index.html (for SPA routing)
 			path = filepath.Join(root, "index.html")
 		}
 
-		// Serve the file
 		c.Request.URL.Path = strings.TrimPrefix(c.Request.URL.Path, "/")
 		fileServer.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 	}
 }
 
-// handleMetricsPost handles incoming data from the agent.
 func handleMetricsPost(c *gin.Context) {
 	var metrics Metrics
 	if err := c.ShouldBindJSON(&metrics); err != nil {
@@ -240,27 +236,23 @@ func handleMetricsPost(c *gin.Context) {
 		return
 	}
 
-	// Add timestamps
 	metrics.Timestamp = time.Now()
 	metrics.LastSeen = time.Now()
 	
-	// Use AgentID if provided, otherwise use hostname
 	if metrics.AgentID == "" {
 		metrics.AgentID = metrics.Hostname
 	}
 
-	// Store the metrics for this agent
 	mu.Lock()
 	agentMetrics[metrics.AgentID] = &metrics
 	mu.Unlock()
 
-	// Create multi-agent data and broadcast
 	multiData := createMultiAgentData()
 	
-	// Send the new metrics to the broadcast channel (non-blocking)
 	select {
 	case broadcast <- multiData:
-		log.Printf("Received metrics from agent %s (%s)", metrics.AgentID, metrics.Hostname)
+		log.Printf("Received metrics from agent %s (%s) - Processes: %d, Docker: %d", 
+			metrics.AgentID, metrics.Hostname, len(metrics.Processes), len(metrics.DockerStats))
 	default:
 		log.Println("Broadcast channel full, dropping metrics")
 	}
@@ -272,21 +264,22 @@ func handleMetricsPost(c *gin.Context) {
 	})
 }
 
-// handleGetAgents returns list of all agents
 func handleGetAgents(c *gin.Context) {
 	mu.RLock()
 	summary := make([]*AgentSummary, 0, len(agentMetrics))
 	for _, metrics := range agentMetrics {
 		isOnline := time.Since(metrics.LastSeen) < agentTimeout
 		summary = append(summary, &AgentSummary{
-			AgentID:     metrics.AgentID,
-			Hostname:    metrics.Hostname,
-			LastSeen:    metrics.LastSeen,
-			IsOnline:    isOnline,
-			CPUUsage:    metrics.CPUUsage,
-			MemoryUsage: metrics.Memory.UsedPercent,
-			DiskUsage:   metrics.Disk.UsedPercent,
-			Uptime:      metrics.Uptime,
+			AgentID:      metrics.AgentID,
+			Hostname:     metrics.Hostname,
+			LastSeen:     metrics.LastSeen,
+			IsOnline:     isOnline,
+			CPUUsage:     metrics.CPUUsage,
+			MemoryUsage:  metrics.Memory.UsedPercent,
+			DiskUsage:    metrics.Disk.UsedPercent,
+			Uptime:       metrics.Uptime,
+			ProcessCount: len(metrics.Processes),
+			DockerCount:  len(metrics.DockerStats),
 		})
 	}
 	mu.RUnlock()
@@ -294,7 +287,6 @@ func handleGetAgents(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
-// handleGetAgent returns specific agent data
 func handleGetAgent(c *gin.Context) {
 	agentID := c.Param("agentId")
 	
@@ -310,31 +302,29 @@ func handleGetAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
-// createMultiAgentData creates the data structure for all agents
 func createMultiAgentData() *MultiAgentData {
 	mu.RLock()
 	defer mu.RUnlock()
 	
-	// Create a copy of all agent metrics
 	agents := make(map[string]*Metrics, len(agentMetrics))
 	summary := make([]*AgentSummary, 0, len(agentMetrics))
 	
 	for agentID, metrics := range agentMetrics {
-		// Deep copy metrics to avoid race conditions
 		metricsCopy := *metrics
 		agents[agentID] = &metricsCopy
 		
-		// Create summary
 		isOnline := time.Since(metrics.LastSeen) < agentTimeout
 		summary = append(summary, &AgentSummary{
-			AgentID:     metrics.AgentID,
-			Hostname:    metrics.Hostname,
-			LastSeen:    metrics.LastSeen,
-			IsOnline:    isOnline,
-			CPUUsage:    metrics.CPUUsage,
-			MemoryUsage: metrics.Memory.UsedPercent,
-			DiskUsage:   metrics.Disk.UsedPercent,
-			Uptime:      metrics.Uptime,
+			AgentID:      metrics.AgentID,
+			Hostname:     metrics.Hostname,
+			LastSeen:     metrics.LastSeen,
+			IsOnline:     isOnline,
+			CPUUsage:     metrics.CPUUsage,
+			MemoryUsage:  metrics.Memory.UsedPercent,
+			DiskUsage:    metrics.Disk.UsedPercent,
+			Uptime:       metrics.Uptime,
+			ProcessCount: len(metrics.Processes),
+			DockerCount:  len(metrics.DockerStats),
 		})
 	}
 	
@@ -345,7 +335,6 @@ func createMultiAgentData() *MultiAgentData {
 	}
 }
 
-// agentCleanupRoutine removes stale agents
 func agentCleanupRoutine() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -362,7 +351,6 @@ func agentCleanupRoutine() {
 	}
 }
 
-// handleWebSocket handles new WebSocket connections from the frontend.
 func handleWebSocket(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -375,29 +363,24 @@ func handleWebSocket(c *gin.Context) {
 		log.Println("Client disconnected")
 	}()
 
-	// Set ping/pong handlers for connection health
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
-	// Register new client.
 	clients[conn] = true
 	log.Println("New WebSocket client connected")
 
-	// Send the current multi-agent data to the new client immediately.
 	multiData := createMultiAgentData()
 	if err := conn.WriteJSON(multiData); err != nil {
 		log.Printf("Error sending initial metrics: %v", err)
 		return
 	}
 
-	// Start ping ticker
 	pingTicker := time.NewTicker(54 * time.Second)
 	defer pingTicker.Stop()
 
-	// Keep the connection open and handle ping/pong
 	for {
 		select {
 		case <-pingTicker.C:
@@ -407,7 +390,6 @@ func handleWebSocket(c *gin.Context) {
 				return
 			}
 		default:
-			// Read messages from client (mainly for pong responses)
 			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			_, _, err := conn.ReadMessage()
 			if err != nil {
@@ -420,11 +402,9 @@ func handleWebSocket(c *gin.Context) {
 	}
 }
 
-// handleBroadcast listens on the broadcast channel and sends data to all clients.
 func handleBroadcast() {
 	for {
 		multiData := <-broadcast
-		// Send to all connected clients.
 		for client := range clients {
 			client.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := client.WriteJSON(multiData); err != nil {

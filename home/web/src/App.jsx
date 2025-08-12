@@ -1,7 +1,6 @@
 // home/web/src/App.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 
-// A simple card component for displaying stats
 const StatCard = ({ title, value, children, status = 'normal', size = 'normal' }) => {
   const statusColors = {
     normal: 'bg-gray-800',
@@ -24,11 +23,9 @@ const StatCard = ({ title, value, children, status = 'normal', size = 'normal' }
   );
 };
 
-// A progress bar component
 const ProgressBar = ({ value, max, showPercentage = false, size = 'normal' }) => {
   const percentage = Math.min((value / max) * 100, 100);
   
-  // Determine color based on percentage
   let colorClass = 'bg-green-500';
   if (percentage > 80) colorClass = 'bg-red-500';
   else if (percentage > 60) colorClass = 'bg-yellow-500';
@@ -51,7 +48,6 @@ const ProgressBar = ({ value, max, showPercentage = false, size = 'normal' }) =>
   );
 };
 
-// Connection status component
 const ConnectionStatus = ({ isConnected, lastUpdate, agentCount, onlineCount }) => (
   <div className="flex items-center space-x-4 mb-4">
     <div className="flex items-center space-x-2">
@@ -71,10 +67,60 @@ const ConnectionStatus = ({ isConnected, lastUpdate, agentCount, onlineCount }) 
   </div>
 );
 
-// Agent summary card component
+const DockerStatsTable = ({ dockerStats }) => {
+  if (!dockerStats || dockerStats.length === 0) return null;
+
+  return (
+    <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
+      <h3 className="text-lg font-semibold text-gray-400 mb-4">Docker Containers ({dockerStats.length})</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-700">
+              <th className="p-3 text-gray-400">Container</th>
+              <th className="p-3 text-gray-400">CPU %</th>
+              <th className="p-3 text-gray-400">Memory</th>
+              <th className="p-3 text-gray-400">Mem %</th>
+              <th className="p-3 text-gray-400">Net I/O</th>
+              <th className="p-3 text-gray-400">PIDs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dockerStats.map((container, index) => (
+              <tr key={`${container.container_id}-${index}`} className="border-b border-gray-700 hover:bg-gray-700 transition-colors">
+                <td className="p-3">
+                  <div>
+                    <div className="text-blue-400 font-mono text-xs">{container.name}</div>
+                    <div className="text-gray-500 text-xs">{container.container_id.substring(0, 12)}</div>
+                  </div>
+                </td>
+                <td className="p-3">
+                  <span className={`${parseFloat(container.cpu_percent) > 50 ? 'text-red-400' : parseFloat(container.cpu_percent) > 25 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {container.cpu_percent}
+                  </span>
+                </td>
+                <td className="p-3 text-gray-300">
+                  <div>{container.memory_usage}</div>
+                  {container.memory_limit && <div className="text-xs text-gray-500">/ {container.memory_limit}</div>}
+                </td>
+                <td className="p-3">
+                  <span className={`${parseFloat(container.memory_percent) > 80 ? 'text-red-400' : parseFloat(container.memory_percent) > 60 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {container.memory_percent}
+                  </span>
+                </td>
+                <td className="p-3 text-gray-300 text-xs">{container.network_io}</td>
+                <td className="p-3 text-gray-300">{container.pids}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const AgentSummaryCard = ({ agent, onClick, isSelected }) => {
   const getStatusColor = (isOnline) => isOnline ? 'border-green-500' : 'border-red-500';
-  const getStatusText = (isOnline) => isOnline ? 'Online' : 'Offline';
   
   return (
     <div 
@@ -91,12 +137,12 @@ const AgentSummaryCard = ({ agent, onClick, isSelected }) => {
         <span className={`text-xs px-2 py-1 rounded ${
           agent.is_online ? 'bg-green-700 text-green-200' : 'bg-red-700 text-red-200'
         }`}>
-          {getStatusText(agent.is_online)}
+          {agent.is_online ? 'Online' : 'Offline'}
         </span>
       </div>
       
       {agent.is_online && (
-        <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-gray-400">CPU:</span>
             <span className={`ml-1 ${agent.cpu_usage > 80 ? 'text-red-400' : 'text-green-400'}`}>
@@ -110,24 +156,19 @@ const AgentSummaryCard = ({ agent, onClick, isSelected }) => {
             </span>
           </div>
           <div>
-            <span className="text-gray-400">Disk:</span>
-            <span className={`ml-1 ${agent.disk_usage > 80 ? 'text-red-400' : 'text-green-400'}`}>
-              {agent.disk_usage.toFixed(1)}%
-            </span>
+            <span className="text-gray-400">Proc:</span>
+            <span className="ml-1 text-blue-400">{agent.process_count}</span>
+          </div>
+          <div>
+            <span className="text-gray-400">Docker:</span>
+            <span className="ml-1 text-purple-400">{agent.docker_count}</span>
           </div>
         </div>
-      )}
-      
-      {!agent.is_online && (
-        <p className="text-xs text-gray-500">
-          Last seen: {new Date(agent.last_seen).toLocaleString()}
-        </p>
       )}
     </div>
   );
 };
 
-// Individual agent view
 const AgentView = ({ agent, formatBytes, formatUptime }) => {
   if (!agent) {
     return (
@@ -138,7 +179,7 @@ const AgentView = ({ agent, formatBytes, formatUptime }) => {
     );
   }
 
-  const isOnline = new Date() - new Date(agent.last_seen) < 120000; // 2 minutes
+  const isOnline = new Date() - new Date(agent.last_seen) < 120000;
   const systemStatus = getSystemStatus(agent);
 
   return (
@@ -152,6 +193,14 @@ const AgentView = ({ agent, formatBytes, formatUptime }) => {
             <p className="text-sm text-gray-500 mt-1">
               Uptime: {formatUptime(agent.uptime)}
             </p>
+            {agent.system_info && (
+              <div className="mt-2 text-sm text-gray-400">
+                <p>Total Processes: <span className="text-blue-400">{agent.system_info.total_processes}</span></p>
+                {agent.system_info.kernel_version && (
+                  <p>Kernel: <span className="text-green-400">{agent.system_info.kernel_version}</span></p>
+                )}
+              </div>
+            )}
           </div>
           <div className="text-right">
             <span className={`px-3 py-1 rounded text-sm ${
@@ -211,10 +260,15 @@ const AgentView = ({ agent, formatBytes, formatUptime }) => {
           status={!isOnline ? 'offline' : systemStatus}
         >
           <div className="text-sm text-gray-400 mt-2">
-            {agent.processes?.length || 0} processes running
+            {agent.processes?.length || 0} top processes
           </div>
         </StatCard>
       </div>
+
+      {/* Docker Stats */}
+      {agent.docker_stats && agent.docker_stats.length > 0 && (
+        <DockerStatsTable dockerStats={agent.docker_stats} />
+      )}
 
       {/* Network Stats */}
       {agent.network && agent.network.length > 0 && (
@@ -251,14 +305,12 @@ const AgentView = ({ agent, formatBytes, formatUptime }) => {
                   <th className="p-3 text-gray-400">Process Name</th>
                   <th className="p-3 text-gray-400">CPU %</th>
                   <th className="p-3 text-gray-400">Memory %</th>
+                  <th className="p-3 text-gray-400">Command</th>
                 </tr>
               </thead>
               <tbody>
-                {agent.processes
-                  .sort((a, b) => (b.cpu_percent || 0) - (a.cpu_percent || 0))
-                  .slice(0, 20)
-                  .map(process => (
-                  <tr key={`${process.pid}-${process.name}`} className="border-b border-gray-700 hover:bg-gray-700 transition-colors">
+                {agent.processes.slice(0, 20).map((process, index) => (
+                  <tr key={`${process.pid}-${index}`} className="border-b border-gray-700 hover:bg-gray-700 transition-colors">
                     <td className="p-3 text-blue-400">{process.pid}</td>
                     <td className="p-3 font-mono text-sm">{process.name}</td>
                     <td className="p-3">
@@ -270,6 +322,9 @@ const AgentView = ({ agent, formatBytes, formatUptime }) => {
                       <span className={`${process.memory_percent > 10 ? 'text-red-400' : process.memory_percent > 5 ? 'text-yellow-400' : 'text-green-400'}`}>
                         {(process.memory_percent || 0).toFixed(1)}%
                       </span>
+                    </td>
+                    <td className="p-3 text-gray-400 text-sm max-w-xs truncate" title={process.command}>
+                      {process.command}
                     </td>
                   </tr>
                 ))}
@@ -311,7 +366,6 @@ const AgentView = ({ agent, formatBytes, formatUptime }) => {
   );
 };
 
-// Helper function to determine system status
 const getSystemStatus = (agent) => {
   if (!agent) return 'normal';
   
@@ -341,7 +395,6 @@ function App() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState('overview');
 
-  // Helper to format bytes into appropriate units
   const formatBytes = useCallback((bytes) => {
     if (bytes === 0) return '0 B';
     
@@ -350,7 +403,6 @@ function App() {
     return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
   }, []);
 
-  // Helper to format uptime
   const formatUptime = useCallback((seconds) => {
     const days = Math.floor(seconds / (24 * 3600));
     const hours = Math.floor((seconds % (24 * 3600)) / 3600);
@@ -361,13 +413,11 @@ function App() {
     return `${minutes}m`;
   }, []);
 
-  // WebSocket connection logic
   const connectWebSocket = useCallback(() => {
     if (socket) {
       socket.close();
     }
 
-    // Determine WebSocket protocol based on window location
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
 
@@ -395,7 +445,6 @@ function App() {
       console.log('WebSocket disconnected', event.code, event.reason);
       setIsConnected(false);
       
-      // Attempt to reconnect with exponential backoff
       if (reconnectAttempts < 10) {
         const timeout = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
         console.log(`Reconnecting in ${timeout}ms...`);
@@ -415,7 +464,6 @@ function App() {
   useEffect(() => {
     connectWebSocket();
 
-    // Cleanup on component unmount
     return () => {
       if (socket) {
         socket.close();
@@ -423,7 +471,6 @@ function App() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-select first agent if overview is selected and we have agents
   useEffect(() => {
     if (multiAgentData && selectedAgent === 'overview' && multiAgentData.summary && multiAgentData.summary.length === 1) {
       setSelectedAgent(multiAgentData.summary[0].agent_id);
@@ -484,19 +531,9 @@ function App() {
           <div className="text-center text-gray-500 py-16">
             <h2 className="text-2xl font-bold mb-4">No Agents Connected</h2>
             <p className="mb-4">Deploy agents on your servers to start monitoring.</p>
-            <div className="bg-gray-800 p-6 rounded-lg max-w-md mx-auto text-left">
-              <h3 className="text-lg font-semibold mb-2 text-white">Quick Setup:</h3>
-              <code className="text-sm text-green-400">
-                docker run -d --name vps-agent<br/>
-                -e HOME_SERVER_URL=http://your-server:8085<br/>
-                -e AGENT_NAME="My Server"<br/>
-                hhftechnology/vps-monitor-agent:latest
-              </code>
-            </div>
           </div>
         ) : (
           <>
-            {/* Agent Navigation */}
             <div className="mb-6">
               <div className="flex space-x-2 overflow-x-auto pb-2">
                 <button
@@ -526,13 +563,9 @@ function App() {
               </div>
             </div>
 
-            {/* Content Area */}
             {selectedAgent === 'overview' ? (
-              // Overview Dashboard
-              <div className="space-y-6">
-                {/* Wrap all content in a single parent fragment */}
-                <>
-                  {/* Summary Stats */}
+              <>
+                <div className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <StatCard title="Total Agents" value={agentCount}>
                       <div className="text-sm text-gray-400 mt-2">
@@ -542,26 +575,33 @@ function App() {
                     </StatCard>
                     
                     <StatCard 
+                      title="Total Processes" 
+                      value={multiAgentData.summary.reduce((sum, a) => sum + (a.process_count || 0), 0)}
+                    >
+                      <div className="text-sm text-gray-400 mt-2">
+                        Across all agents
+                      </div>
+                    </StatCard>
+
+                    <StatCard 
+                      title="Docker Containers" 
+                      value={multiAgentData.summary.reduce((sum, a) => sum + (a.docker_count || 0), 0)}
+                    >
+                      <div className="text-sm text-gray-400 mt-2">
+                        Active containers
+                      </div>
+                    </StatCard>
+
+                    <StatCard 
                       title="Avg CPU Usage" 
-                      value={`${(multiAgentData.summary.filter(a => a.is_online).reduce((sum, a) => sum + a.cpu_usage, 0) / Math.max(onlineCount, 1)).toFixed(1)}%`}
-                    >
-                      <div className="text-sm text-gray-400 mt-2">
-                        Across {onlineCount} online agents
-                      </div>
-                    </StatCard>
-
-                    <StatCard 
-                      title="Avg Memory Usage" 
-                      value={`${(multiAgentData.summary.filter(a => a.is_online).reduce((sum, a) => sum + a.memory_usage, 0) / Math.max(onlineCount, 1)).toFixed(1)}%`}
-                    >
-                      <div className="text-sm text-gray-400 mt-2">
-                        Across {onlineCount} online agents
-                      </div>
-                    </StatCard>
-
-                    <StatCard 
-                      title="Avg Disk Usage" 
-                      value={`${(multiAgentData.summary.filter(a => a.is_online).reduce((sum, a) => sum + a.disk_usage, 0) / Math.max(onlineCount, 1)).toFixed(1)}%`}
+                      value={
+                        (() => {
+                          const avgCpu = multiAgentData.summary
+                            .filter(a => a.is_online)
+                            .reduce((sum, a) => sum + a.cpu_usage, 0) / Math.max(onlineCount, 1);
+                          return `${avgCpu.toFixed(1)}%`;
+                        })()
+                      }
                     >
                       <div className="text-sm text-gray-400 mt-2">
                         Across {onlineCount} online agents
@@ -569,7 +609,6 @@ function App() {
                     </StatCard>
                   </div>
 
-                  {/* Agent Grid */}
                   <div>
                     <h2 className="text-2xl font-bold mb-4">All Agents</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -583,10 +622,9 @@ function App() {
                       ))}
                     </div>
                   </div>
-                </>
-              </div>
+                </div>
+              </>
             ) : (
-              // Individual Agent View
               <AgentView 
                 agent={multiAgentData.agents[selectedAgent]} 
                 formatBytes={formatBytes}
