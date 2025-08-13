@@ -5,7 +5,7 @@ FROM node:22-alpine AS frontend-builder
 
 WORKDIR /app/web
 COPY home/web/package*.json ./
-RUN npm ci --only=production --no-audit --no-fund
+RUN npm install
 COPY home/web/ ./
 RUN npm run build
 
