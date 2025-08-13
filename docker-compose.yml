@@ -7,14 +7,6 @@ services:
     environment:
       - GIN_MODE=release
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8085/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - vps_monitor
     deploy:
       resources:
         limits:
@@ -24,26 +16,37 @@ services:
           cpus: '0.1'
           memory: 32M
 
-  # Agent 1 - Local monitoring
-  agent-local:
+  agent:
     image: hhftechnology/vps-monitor-agent:latest
     container_name: vps_monitor_agent_local
+    # Mount necessary host directories
+    # Required for accessing host processes and Docker
+    privileged: true
+    volumes:
+      # Docker socket for container stats
+      - /var/run/docker.sock:/var/run/docker.sock:ro    
+      # Host filesystem for process information
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /dev:/host/dev:ro
+      - /etc/os-release:/host/etc/os-release:ro   
+      # Host root filesystem (optional, for disk usage of specific mount points)
+      - /:/host/root:ro
+    user: "root" 
     environment:
       - HOME_SERVER_URL=http://home-server:8085
       - AGENT_NAME=Local-Server
-      # Optional: Set custom agent ID
-      # - AGENT_ID=local-001
-    depends_on:
-      home-server:
-        condition: service_healthy
+      - AGENT_ID=local-002
+      # Tell agent where to find host proc
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ROOT=/host/root
     restart: unless-stopped
-    networks:
-      - vps_monitor
     deploy:
       resources:
         limits:
           cpus: '0.2'
-          memory: 64M
+          memory: 50M
         reservations:
           cpus: '0.05'
           memory: 16M
@@ -74,6 +77,3 @@ services:
 networks:
   vps_monitor:
     driver: bridge
-
-# For development: Override with docker-compose.dev.yml
-# docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
