@@ -1,4 +1,4 @@
-# home/Dockerfile - Optimized for <10MB
+# home/Dockerfile - Final minimal with embedded frontend
 
 # ---- Build Stage 1: Frontend ----
 FROM node:22-alpine AS frontend-builder
@@ -7,63 +7,66 @@ WORKDIR /app/web
 COPY home/web/package*.json ./
 RUN npm install
 COPY home/web/ ./
-RUN npm run build
 
-# Clean and compress frontend assets
-RUN find build -name "*.js" -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
-    find build -name "*.css" -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
-    find build -name "*.html" -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
-    rm -rf node_modules src public package*.json && \
-    rm -rf build/static/**/*.map
+# Build with maximum compression
+ENV GENERATE_SOURCEMAP=false \
+    INLINE_RUNTIME_CHUNK=false \
+    IMAGE_INLINE_SIZE_LIMIT=0
 
-# ---- Build Stage 2: Binary Compression ----
-FROM alpine:latest AS upx-builder
+RUN npm run build && \
+    # Remove all source maps and unnecessary files
+    find build -name "*.map" -delete && \
+    find build -name "*.txt" -delete && \
+    find build -name "favicon.ico" -delete && \
+    # Compress all text assets
+    find build -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.json" \) \
+        -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
+    # Report final size
+    du -sh build
 
-RUN apk add --no-cache upx
+# ---- Build Stage 2: Backend with Embedded Assets ----
+FROM golang:1.22-alpine AS builder
 
-# ---- Build Stage 3: Backend ----
-FROM golang:1.22-alpine AS backend-builder
-
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache git upx
 
 WORKDIR /app
+
+# Copy Go modules first for better caching
 COPY home/go.mod home/go.sum ./
 RUN go mod download
+
+# Copy Go source
 COPY home/main.go ./
+
+# Copy compressed frontend build
+COPY --from=frontend-builder /app/web/build ./web/build
 
 # Build with maximum optimizations
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S) -extldflags '-static'" \
+    -ldflags="-s -w -extldflags '-static'" \
     -trimpath \
     -a \
     -installsuffix cgo \
-    -o /home-server-binary .
+    -tags netgo \
+    -o /app/vps-monitor . && \
+    # Compress binary
+    upx --best --lzma /app/vps-monitor && \
+    # Report final binary size
+    ls -lh /app/vps-monitor
 
-# Compress binary with UPX
-COPY --from=upx-builder /usr/bin/upx /usr/bin/upx
-RUN upx --best --lzma /home-server-binary
-
-# ---- Final Stage: Scratch Base ----
+# ---- Final Stage: Scratch ----
 FROM scratch
 
-# Copy SSL certificates from Alpine
-COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Copy CA certificates for HTTPS (if needed)
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy compressed binary
-COPY --from=backend-builder /home-server-binary /home-server
+# Copy the compressed binary with embedded frontend
+COPY --from=builder /app/vps-monitor /vps-monitor
 
-# Copy compressed frontend assets
-COPY --from=frontend-builder /app/web/build /web/build
-
-# Health check will be handled by orchestrator
-LABEL maintainer="HHF Technology" \
-      description="VPS Monitor Home Server" \
-      version="1.1.0"
+# Minimal labels
+LABEL description="VPS Monitor - Minimal" \
+      version="1.1.0-minimal"
 
 EXPOSE 8085
 
-# Set minimal environment
-ENV GIN_MODE=release \
-    PORT=8085
-
-ENTRYPOINT ["/home-server"]
+ENTRYPOINT ["/vps-monitor"]
