@@ -1,95 +1,69 @@
-# home/Dockerfile
+# home/Dockerfile - Optimized for <10MB
 
 # ---- Build Stage 1: Frontend ----
 FROM node:22-alpine AS frontend-builder
 
-# Set working directory
 WORKDIR /app/web
-
-# Copy package files first for better caching
 COPY home/web/package*.json ./
-
-# Install dependencies with clean npm cache
-RUN npm install
-
-# Copy frontend source code
+RUN npm ci --only=production --no-audit --no-fund
 COPY home/web/ ./
-
-# Build production static files
 RUN npm run build
 
-# Clean up unnecessary files
-RUN rm -rf node_modules src public package*.json
+# Clean and compress frontend assets
+RUN find build -name "*.js" -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
+    find build -name "*.css" -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
+    find build -name "*.html" -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
+    rm -rf node_modules src public package*.json && \
+    rm -rf build/static/**/*.map
 
-# ---- Build Stage 2: Backend ----
+# ---- Build Stage 2: Binary Compression ----
+FROM alpine:latest AS upx-builder
+
+RUN apk add --no-cache upx
+
+# ---- Build Stage 3: Backend ----
 FROM golang:1.22-alpine AS backend-builder
 
-# Install build dependencies
 RUN apk add --no-cache git ca-certificates
 
-# Set working directory
 WORKDIR /app
-
-# Copy Go module files and download dependencies
 COPY home/go.mod home/go.sum ./
 RUN go mod download
-
-# Copy backend source
 COPY home/main.go ./
 
-# Build Go binary with optimizations
+# Build with maximum optimizations
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S)" \
+    -ldflags="-s -w -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S) -extldflags '-static'" \
     -trimpath \
+    -a \
+    -installsuffix cgo \
     -o /home-server-binary .
 
-# ---- Final Stage ----
-FROM alpine:latest
+# Compress binary with UPX
+COPY --from=upx-builder /usr/bin/upx /usr/bin/upx
+RUN upx --best --lzma /home-server-binary
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    ca-certificates \
-    wget \
-    curl \
-    tzdata \
-    && rm -rf /var/cache/apk/*
+# ---- Final Stage: Scratch Base ----
+FROM scratch
 
-# Create non-root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Copy SSL certificates from Alpine
+COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Set working directory
-WORKDIR /app
+# Copy compressed binary
+COPY --from=backend-builder /home-server-binary /home-server
 
-# Copy Go binary
-COPY --from=backend-builder /home-server-binary /app/home-server
+# Copy compressed frontend assets
+COPY --from=frontend-builder /app/web/build /web/build
 
-# Copy frontend build output
-COPY --from=frontend-builder /app/web/build /app/web/build
-
-# Make binary executable
-RUN chmod +x /app/home-server
-
-# Change ownership to non-root user
-RUN chown -R appuser:appgroup /app
-
-# Switch to non-root user
-USER appuser
-
-# Add health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8085/api/health || exit 1
-
-# Set metadata
+# Health check will be handled by orchestrator
 LABEL maintainer="HHF Technology" \
-      description="VPS Monitor Home Server - Web dashboard and API" \
+      description="VPS Monitor Home Server" \
       version="1.1.0"
 
-# Expose server port
 EXPOSE 8085
 
-# Set default environment variables
+# Set minimal environment
 ENV GIN_MODE=release \
     PORT=8085
 
-# Run server
-CMD ["/app/home-server"]
+ENTRYPOINT ["/home-server"]

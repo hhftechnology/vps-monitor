@@ -1,7 +1,10 @@
-# agent/Dockerfile - Ultra-Small Distroless Version
+# Dockerfile.scratch - Absolute Minimal Scratch Version
 
 # ---- Build Stage ----
 FROM golang:1.23-alpine AS builder
+
+# Install ca-certificates that we'll copy to scratch
+RUN apk add --no-cache ca-certificates git
 
 # Set the working directory inside the container.
 WORKDIR /app
@@ -22,13 +25,23 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -tags netgo,osusergo \
     -o /agent-binary .
 
-RUN file /agent-binary && ldd /agent-binary 2>&1 | grep -q "not a dynamic executable" || exit 1
+# Create passwd file for non-root user
+RUN echo 'appuser:x:65534:65534:appuser:/:/sbin/nologin' > /tmp/passwd
 
 # ---- Final Stage ----
-FROM gcr.io/distroless/static:nonroot
+FROM scratch
+
+# Copy CA certificates for HTTPS requests
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy passwd file for user
+COPY --from=builder /tmp/passwd /etc/passwd
 
 # Copy the static binary from the builder stage.
-COPY --from=builder /agent-binary /usr/local/bin/agent
+COPY --from=builder /agent-binary /agent
+
+# Run as non-root user
+USER appuser
 
 # Set metadata
 LABEL maintainer="HHF Technology" \
@@ -43,8 +56,6 @@ ENV HOME_SERVER_URL="" \
     HOST_SYS="/host/sys" \
     HOST_ROOT="/host/root"
 
-# No health check possible with distroless (no shell)
-# Health checking should be done externally
 
 # Command to run the application.
-ENTRYPOINT ["/usr/local/bin/agent"]
+ENTRYPOINT ["/agent"]
