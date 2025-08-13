@@ -1,10 +1,10 @@
-# Dockerfile.scratch - Absolute Minimal Scratch Version
+# agent/Dockerfile
 
 # ---- Build Stage ----
 FROM golang:1.23-alpine AS builder
 
-# Install ca-certificates that we'll copy to scratch
-RUN apk add --no-cache ca-certificates git
+# Install git for go mod download
+RUN apk add --no-cache git
 
 # Set the working directory inside the container.
 WORKDIR /app
@@ -16,32 +16,40 @@ RUN go mod download
 # Copy the source code.
 COPY main.go .
 
-# Build the Go app with maximum optimizations for static binary
+# Build the Go app with optimizations
+# -ldflags="-s -w" strips debugging information and reduces binary size
+# CGO_ENABLED=0 creates a static binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -extldflags '-static' -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S)" \
+    -ldflags="-s -w -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S)" \
     -trimpath \
-    -a \
-    -installsuffix cgo \
-    -tags netgo,osusergo \
     -o /agent-binary .
 
-# Create passwd file for non-root user
-RUN echo 'appuser:x:65534:65534:appuser:/:/sbin/nologin' > /tmp/passwd
-
 # ---- Final Stage ----
-FROM scratch
+FROM alpine:latest
 
-# Copy CA certificates for HTTPS requests
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Install required tools for health checks and debugging
+RUN apk add --no-cache \
+    ca-certificates \
+    wget \
+    curl \
+    procps \
+    && rm -rf /var/cache/apk/*
 
-# Copy passwd file for user
-COPY --from=builder /tmp/passwd /etc/passwd
+# Create non-root user for security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 # Copy the static binary from the builder stage.
-COPY --from=builder /agent-binary /agent
+COPY --from=builder /agent-binary /usr/local/bin/agent
 
-# Run as non-root user
+# Make sure the binary is executable
+RUN chmod +x /usr/local/bin/agent
+
+# Switch to non-root user
 USER appuser
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep agent || exit 1
 
 # Set metadata
 LABEL maintainer="HHF Technology" \
@@ -56,6 +64,5 @@ ENV HOME_SERVER_URL="" \
     HOST_SYS="/host/sys" \
     HOST_ROOT="/host/root"
 
-
 # Command to run the application.
-ENTRYPOINT ["/agent"]
+CMD ["/usr/local/bin/agent"]

@@ -1,72 +1,95 @@
-# home/Dockerfile - Final minimal with embedded frontend
+# home/Dockerfile
 
 # ---- Build Stage 1: Frontend ----
 FROM node:22-alpine AS frontend-builder
 
+# Set working directory
 WORKDIR /app/web
+
+# Copy package files first for better caching
 COPY home/web/package*.json ./
+
+# Install dependencies with clean npm cache
 RUN npm install
+
+# Copy frontend source code
 COPY home/web/ ./
 
-# Build with maximum compression
-ENV GENERATE_SOURCEMAP=false \
-    INLINE_RUNTIME_CHUNK=false \
-    IMAGE_INLINE_SIZE_LIMIT=0
+# Build production static files
+RUN npm run build
 
-RUN npm run build && \
-    # Remove all source maps and unnecessary files
-    find build -name "*.map" -delete && \
-    find build -name "*.txt" -delete && \
-    find build -name "favicon.ico" -delete && \
-    # Compress all text assets
-    find build -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.json" \) \
-        -exec gzip -9 {} \; -exec mv {}.gz {} \; && \
-    # Report final size
-    du -sh build
+# Clean up unnecessary files
+RUN rm -rf node_modules src public package*.json
 
-# ---- Build Stage 2: Backend with Embedded Assets ----
-FROM golang:1.22-alpine AS builder
+# ---- Build Stage 2: Backend ----
+FROM golang:1.22-alpine AS backend-builder
 
-RUN apk add --no-cache git upx
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
 
+# Set working directory
 WORKDIR /app
 
-# Copy Go modules first for better caching
+# Copy Go module files and download dependencies
 COPY home/go.mod home/go.sum ./
 RUN go mod download
 
-# Copy Go source
+# Copy backend source
 COPY home/main.go ./
 
-# Copy compressed frontend build
-COPY --from=frontend-builder /app/web/build ./web/build
-
-# Build with maximum optimizations
+# Build Go binary with optimizations
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -extldflags '-static'" \
+    -ldflags="-s -w -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S)" \
     -trimpath \
-    -a \
-    -installsuffix cgo \
-    -tags netgo \
-    -o /app/vps-monitor . && \
-    # Compress binary
-    upx --best --lzma /app/vps-monitor && \
-    # Report final binary size
-    ls -lh /app/vps-monitor
+    -o /home-server-binary .
 
-# ---- Final Stage: Scratch ----
-FROM scratch
+# ---- Final Stage ----
+FROM alpine:latest
 
-# Copy CA certificates for HTTPS (if needed)
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    wget \
+    curl \
+    tzdata \
+    && rm -rf /var/cache/apk/*
 
-# Copy the compressed binary with embedded frontend
-COPY --from=builder /app/vps-monitor /vps-monitor
+# Create non-root user for security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Minimal labels
-LABEL description="VPS Monitor - Minimal" \
-      version="1.1.0-minimal"
+# Set working directory
+WORKDIR /app
 
+# Copy Go binary
+COPY --from=backend-builder /home-server-binary /app/home-server
+
+# Copy frontend build output
+COPY --from=frontend-builder /app/web/build /app/web/build
+
+# Make binary executable
+RUN chmod +x /app/home-server
+
+# Change ownership to non-root user
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8085/api/health || exit 1
+
+# Set metadata
+LABEL maintainer="HHF Technology" \
+      description="VPS Monitor Home Server - Web dashboard and API" \
+      version="1.1.0"
+
+# Expose server port
 EXPOSE 8085
 
-ENTRYPOINT ["/vps-monitor"]
+# Set default environment variables
+ENV GIN_MODE=release \
+    PORT=8085
+
+# Run server
+CMD ["/app/home-server"]
