@@ -1,0 +1,17 @@
+services:
+  vps-monitor:
+    build:
+      context: .
+      dockerfile: ./home/Dockerfile
+    ports:
+      - "6789:6789"
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_PASSWORD_SALT=${ADMIN_PASSWORD_SALT}
+      - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.ssh:/root/.ssh:ro
+      - /proc:/host/proc:ro
