@@ -147,8 +147,8 @@ export function ContainerDetailsSheet({
 
   return (
     <Sheet open={isOpen} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-2xl w-full overflow-y-auto">
-        <SheetHeader>
+      <SheetContent className="sm:max-w-2xl w-full overflow-y-auto p-0">
+        <SheetHeader className="px-6 pt-6">
           <SheetTitle className="flex items-center gap-2">
             {containerName}
             <Badge
@@ -158,7 +158,7 @@ export function ContainerDetailsSheet({
               {container.state}
             </Badge>
           </SheetTitle>
-          <SheetDescription className="text-xs font-mono">
+          <SheetDescription className="text-xs font-mono truncate">
             {container.image}
           </SheetDescription>
         </SheetHeader>
@@ -166,7 +166,7 @@ export function ContainerDetailsSheet({
         <Tabs
           value={activeTab}
           onValueChange={setActiveTab}
-          className="mt-6"
+          className="flex-1 flex flex-col px-6 pb-6"
         >
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="stats" className="flex items-center gap-2">
@@ -187,9 +187,9 @@ export function ContainerDetailsSheet({
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="stats" className="space-y-4">
+          <TabsContent value="stats" className="space-y-6 mt-4">
             {/* Stats Controls */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2">
                 <Badge variant={isConnected ? "default" : "secondary"}>
                   {isConnected ? "Live" : "Disconnected"}
@@ -260,21 +260,21 @@ export function ContainerDetailsSheet({
 
             {/* Live Stats Cards */}
             {statsCards && (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                 {statsCards.map((card) => {
                   const Icon = card.icon;
                   return (
-                    <Card key={card.label}>
-                      <CardContent className="p-4">
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-md bg-muted ${card.color}`}>
-                            <Icon className="size-4" />
+                    <Card key={card.label} className="overflow-hidden">
+                      <CardContent className="p-3">
+                        <div className="flex flex-col items-center text-center gap-2">
+                          <div className={`p-2 rounded-lg bg-muted ${card.color}`}>
+                            <Icon className="size-5" />
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-muted-foreground">
+                          <div className="space-y-0.5">
+                            <p className="text-xs text-muted-foreground font-medium">
                               {card.label}
                             </p>
-                            <p className="text-sm font-medium truncate">
+                            <p className="text-sm font-semibold truncate max-w-full">
                               {card.value}
                             </p>
                             {card.subValue && (
@@ -283,7 +283,7 @@ export function ContainerDetailsSheet({
                               </p>
                             )}
                             {card.subLabel && (
-                              <p className="text-xs text-muted-foreground">
+                              <p className="text-[10px] text-muted-foreground">
                                 {card.subLabel}
                               </p>
                             )}
@@ -300,7 +300,7 @@ export function ContainerDetailsSheet({
             <ContainerStatsCharts history={history} />
           </TabsContent>
 
-          <TabsContent value="terminal" className="min-h-[400px]">
+          <TabsContent value="terminal" className="min-h-[400px] mt-4">
             {isRunning ? (
               <Suspense
                 fallback={
@@ -321,7 +321,7 @@ export function ContainerDetailsSheet({
             )}
           </TabsContent>
 
-          <TabsContent value="env">
+          <TabsContent value="env" className="mt-4">
             <EnvironmentVariables
               containerId={effectiveContainerId}
               containerHost={host}
