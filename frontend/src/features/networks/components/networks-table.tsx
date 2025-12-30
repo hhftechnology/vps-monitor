@@ -39,16 +39,10 @@ export function NetworksTable() {
     host: string;
   } | null>(null);
 
-  // Flatten networks from all hosts
+  // Networks already come as flat array with host field
   const allNetworks = useMemo(() => {
     if (!data?.networks) return [];
-    const networks: Array<NetworkInfo & { hostName: string }> = [];
-    for (const [hostName, hostNetworks] of Object.entries(data.networks)) {
-      for (const net of hostNetworks) {
-        networks.push({ ...net, hostName });
-      }
-    }
-    return networks;
+    return data.networks;
   }, [data?.networks]);
 
   // Filter networks by search
@@ -136,7 +130,7 @@ export function NetworksTable() {
               </TableHeader>
               <TableBody>
                 {filteredNetworks.map((network) => (
-                  <TableRow key={`${network.hostName}-${network.id}`}>
+                  <TableRow key={`${network.host}-${network.id}`}>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{network.name}</span>
@@ -163,7 +157,7 @@ export function NetworksTable() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{network.hostName}</Badge>
+                      <Badge variant="outline">{network.host}</Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary">{network.driver}</Badge>
@@ -181,7 +175,7 @@ export function NetworksTable() {
                             onClick={() =>
                               setSelectedNetwork({
                                 network,
-                                host: network.hostName,
+                                host: network.host,
                               })
                             }
                           >

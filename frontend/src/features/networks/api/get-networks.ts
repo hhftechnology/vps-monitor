@@ -6,7 +6,7 @@ import type { NetworkDetails, NetworkInfo } from "../types";
 const NETWORKS_ENDPOINT = `${API_BASE_URL}/api/v1/networks`;
 
 export interface GetNetworksResponse {
-  networks: Record<string, NetworkInfo[]>;
+  networks: NetworkInfo[];
 }
 
 export async function getNetworks(): Promise<GetNetworksResponse> {
@@ -25,12 +25,12 @@ export async function getNetworks(): Promise<GetNetworksResponse> {
 
   const networks = (data as { networks?: unknown }).networks;
 
-  if (!networks || typeof networks !== "object") {
+  if (!Array.isArray(networks)) {
     throw new Error("Unexpected response format");
   }
 
   return {
-    networks: networks as Record<string, NetworkInfo[]>,
+    networks: networks as NetworkInfo[],
   };
 }
 

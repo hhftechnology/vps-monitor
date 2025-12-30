@@ -6,7 +6,7 @@ import type { ImageInfo } from "../types";
 const IMAGES_ENDPOINT = `${API_BASE_URL}/api/v1/images`;
 
 export interface GetImagesResponse {
-  images: Record<string, ImageInfo[]>;
+  images: ImageInfo[];
   readOnly: boolean;
 }
 
@@ -27,12 +27,12 @@ export async function getImages(): Promise<GetImagesResponse> {
   const images = (data as { images?: unknown }).images;
   const readOnly = (data as { readOnly?: boolean }).readOnly ?? false;
 
-  if (!images || typeof images !== "object") {
+  if (!Array.isArray(images)) {
     throw new Error("Unexpected response format");
   }
 
   return {
-    images: images as Record<string, ImageInfo[]>,
+    images: images as ImageInfo[],
     readOnly,
   };
 }

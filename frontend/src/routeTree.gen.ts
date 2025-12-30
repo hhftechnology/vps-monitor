@@ -11,8 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ImagesIndexRouteImport } from './routes/images/index'
 import { Route as NetworksIndexRouteImport } from './routes/networks/index'
+import { Route as ImagesIndexRouteImport } from './routes/images/index'
 import { Route as AlertsIndexRouteImport } from './routes/alerts/index'
 import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
 import { Route as ContainersContainerIdLogsRouteImport } from './routes/containers/$containerId/logs'
@@ -27,14 +27,14 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ImagesIndexRoute = ImagesIndexRouteImport.update({
-  id: '/images/',
-  path: '/images/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const NetworksIndexRoute = NetworksIndexRouteImport.update({
   id: '/networks/',
   path: '/networks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ImagesIndexRoute = ImagesIndexRouteImport.update({
+  id: '/images/',
+  path: '/images/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AlertsIndexRoute = AlertsIndexRouteImport.update({
@@ -57,29 +57,29 @@ const ContainersContainerIdLogsRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/images/': typeof ImagesIndexRoute
-  '/networks/': typeof NetworksIndexRoute
-  '/alerts/': typeof AlertsIndexRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
+  '/alerts': typeof AlertsIndexRoute
+  '/images': typeof ImagesIndexRoute
+  '/networks': typeof NetworksIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
+  '/alerts': typeof AlertsIndexRoute
   '/images': typeof ImagesIndexRoute
   '/networks': typeof NetworksIndexRoute
-  '/alerts': typeof AlertsIndexRoute
-  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
+  '/alerts/': typeof AlertsIndexRoute
   '/images/': typeof ImagesIndexRoute
   '/networks/': typeof NetworksIndexRoute
-  '/alerts/': typeof AlertsIndexRoute
-  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
 export interface FileRouteTypes {
@@ -87,31 +87,38 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
-    | '/images/'
-    | '/networks/'
-    | '/alerts/'
     | '/demo/tanstack-query'
+    | '/alerts'
+    | '/images'
+    | '/networks'
     | '/containers/$containerId/logs'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/images' | '/networks' | '/alerts' | '/demo/tanstack-query' | '/containers/$containerId/logs'
+  to:
+    | '/'
+    | '/login'
+    | '/demo/tanstack-query'
+    | '/alerts'
+    | '/images'
+    | '/networks'
+    | '/containers/$containerId/logs'
   id:
     | '__root__'
     | '/'
     | '/login'
+    | '/demo/tanstack-query'
+    | '/alerts/'
     | '/images/'
     | '/networks/'
-    | '/alerts/'
-    | '/demo/tanstack-query'
     | '/containers/$containerId/logs'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
+  AlertsIndexRoute: typeof AlertsIndexRoute
   ImagesIndexRoute: typeof ImagesIndexRoute
   NetworksIndexRoute: typeof NetworksIndexRoute
-  AlertsIndexRoute: typeof AlertsIndexRoute
-  DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
   ContainersContainerIdLogsRoute: typeof ContainersContainerIdLogsRoute
 }
 
@@ -131,24 +138,24 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/images/': {
-      id: '/images/'
-      path: '/images/'
-      fullPath: '/images/'
-      preLoaderRoute: typeof ImagesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/networks/': {
       id: '/networks/'
-      path: '/networks/'
-      fullPath: '/networks/'
+      path: '/networks'
+      fullPath: '/networks'
       preLoaderRoute: typeof NetworksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/images/': {
+      id: '/images/'
+      path: '/images'
+      fullPath: '/images'
+      preLoaderRoute: typeof ImagesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/alerts/': {
       id: '/alerts/'
-      path: '/alerts/'
-      fullPath: '/alerts/'
+      path: '/alerts'
+      fullPath: '/alerts'
       preLoaderRoute: typeof AlertsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
@@ -172,10 +179,10 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  DemoTanstackQueryRoute: DemoTanstackQueryRoute,
+  AlertsIndexRoute: AlertsIndexRoute,
   ImagesIndexRoute: ImagesIndexRoute,
   NetworksIndexRoute: NetworksIndexRoute,
-  AlertsIndexRoute: AlertsIndexRoute,
-  DemoTanstackQueryRoute: DemoTanstackQueryRoute,
   ContainersContainerIdLogsRoute: ContainersContainerIdLogsRoute,
 }
 export const routeTree = rootRouteImport

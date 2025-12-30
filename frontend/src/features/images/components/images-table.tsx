@@ -76,22 +76,17 @@ export function ImagesTable() {
     host: string;
   } | null>(null);
 
-  // Flatten images from all hosts
+  // Images already come as flat array with host field
   const allImages = useMemo(() => {
     if (!data?.images) return [];
-    const images: Array<ImageInfo & { hostName: string }> = [];
-    for (const [hostName, hostImages] of Object.entries(data.images)) {
-      for (const img of hostImages) {
-        images.push({ ...img, hostName });
-      }
-    }
-    return images;
+    return data.images;
   }, [data?.images]);
 
   // Get unique hosts for pull dialog
   const hosts = useMemo(() => {
     if (!data?.images) return [];
-    return Object.keys(data.images);
+    const uniqueHosts = new Set(data.images.map((img) => img.host));
+    return Array.from(uniqueHosts);
   }, [data?.images]);
 
   // Filter images by search
@@ -210,7 +205,7 @@ export function ImagesTable() {
               </TableHeader>
               <TableBody>
                 {filteredImages.map((image) => (
-                  <TableRow key={`${image.hostName}-${image.id}`}>
+                  <TableRow key={`${image.host}-${image.id}`}>
                     <TableCell>
                       <div className="flex flex-col gap-1">
                         <span className="font-medium">
@@ -229,7 +224,7 @@ export function ImagesTable() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{image.hostName}</Badge>
+                      <Badge variant="outline">{image.host}</Badge>
                     </TableCell>
                     <TableCell>{formatBytes(image.size)}</TableCell>
                     <TableCell>{formatDate(image.created)}</TableCell>
@@ -243,7 +238,7 @@ export function ImagesTable() {
                               onClick={() =>
                                 setImageToDelete({
                                   image,
-                                  host: image.hostName,
+                                  host: image.host,
                                 })
                               }
                             >

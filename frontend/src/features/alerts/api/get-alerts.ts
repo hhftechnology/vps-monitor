@@ -42,7 +42,20 @@ export async function getAlertConfig(): Promise<AlertConfig> {
     throw new Error(message || `Request failed with status ${response.status}`);
   }
 
-  return (await response.json()) as AlertConfig;
+  const data = (await response.json()) as unknown;
+
+  if (!data || typeof data !== "object" || data === null) {
+    throw new Error("Unexpected response format");
+  }
+
+  // Backend returns { config: AlertConfig }
+  const config = (data as { config?: unknown }).config;
+
+  if (!config || typeof config !== "object") {
+    throw new Error("Unexpected response format");
+  }
+
+  return config as AlertConfig;
 }
 
 export async function acknowledgeAlert(alertId: string): Promise<void> {
