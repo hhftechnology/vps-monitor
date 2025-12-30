@@ -29,6 +29,7 @@ import {
   getInitialStateCounts,
   groupByCompose,
 } from "./container-utils";
+import { ContainerDetailsSheet } from "./container-details-sheet";
 import { ContainersLogsSheet } from "./containers-logs-sheet";
 import { ContainersPagination } from "./containers-pagination";
 import { ContainersStateSummary } from "./containers-state-summary";
@@ -94,6 +95,9 @@ export function ContainersDashboard() {
   const [selectedContainer, setSelectedContainer] =
     useState<ContainerInfo | null>(null);
   const [isLogsSheetOpen, setIsLogsSheetOpen] = useState(false);
+  const [isDetailsSheetOpen, setIsDetailsSheetOpen] = useState(false);
+  const [detailsContainer, setDetailsContainer] =
+    useState<ContainerInfo | null>(null);
   const [pendingAction, setPendingAction] = useState<{
     id: string;
     type: ContainerActionType;
@@ -306,6 +310,18 @@ export function ContainersDashboard() {
     }
   };
 
+  const handleViewStats = (container: ContainerInfo) => {
+    setDetailsContainer(container);
+    setIsDetailsSheetOpen(true);
+  };
+
+  const handleDetailsSheetOpenChange = (open: boolean) => {
+    setIsDetailsSheetOpen(open);
+    if (!open) {
+      setDetailsContainer(null);
+    }
+  };
+
   const handleContainerRecreated = async (newContainerId: string) => {
     await queryClient.refetchQueries({
       queryKey: ["containers"],
@@ -411,6 +427,7 @@ export function ContainersDashboard() {
           onRestart={handleRestartContainer}
           onDelete={handleDeleteContainer}
           onViewLogs={handleViewLogs}
+          onViewStats={handleViewStats}
           onRetry={() => {
             void refetch();
           }}
@@ -494,6 +511,14 @@ export function ContainersDashboard() {
         isReadOnly={isReadOnly}
         onOpenChange={handleLogsSheetOpenChange}
         onContainerRecreated={handleContainerRecreated}
+      />
+
+      <ContainerDetailsSheet
+        container={detailsContainer}
+        host={detailsContainer?.host ?? ""}
+        isOpen={isDetailsSheetOpen}
+        onOpenChange={handleDetailsSheetOpenChange}
+        isReadOnly={isReadOnly}
       />
     </div>
   );

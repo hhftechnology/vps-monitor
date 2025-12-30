@@ -5,26 +5,33 @@ import { API_BASE_URL } from "@/types/api";
 
 import type { ContainerStats } from "../types/stats";
 
+const MAX_HISTORY_LENGTH = 60; // Keep last 60 data points for graphs
+
 interface UseContainerStatsOptions {
   containerId: string;
   host: string;
   enabled?: boolean;
+  historyLength?: number;
 }
 
 interface UseContainerStatsReturn {
   stats: ContainerStats | null;
+  history: ContainerStats[];
   isConnected: boolean;
   error: string | null;
   connect: () => void;
   disconnect: () => void;
+  clearHistory: () => void;
 }
 
 export function useContainerStats({
   containerId,
   host,
   enabled = true,
+  historyLength = MAX_HISTORY_LENGTH,
 }: UseContainerStatsOptions): UseContainerStatsReturn {
   const [stats, setStats] = useState<ContainerStats | null>(null);
+  const [history, setHistory] = useState<ContainerStats[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -53,6 +60,14 @@ export function useContainerStats({
       try {
         const data = JSON.parse(event.data) as ContainerStats;
         setStats(data);
+        setHistory((prev) => {
+          const updated = [...prev, data];
+          // Keep only the last N data points
+          if (updated.length > historyLength) {
+            return updated.slice(-historyLength);
+          }
+          return updated;
+        });
       } catch {
         console.error("Failed to parse stats data");
       }
@@ -68,7 +83,7 @@ export function useContainerStats({
     };
 
     wsRef.current = ws;
-  }, [containerId, host]);
+  }, [containerId, host, historyLength]);
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
@@ -76,6 +91,10 @@ export function useContainerStats({
       wsRef.current = null;
     }
     setIsConnected(false);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
   }, []);
 
   useEffect(() => {
@@ -90,9 +109,11 @@ export function useContainerStats({
 
   return {
     stats,
+    history,
     isConnected,
     error,
     connect,
     disconnect,
+    clearHistory,
   };
 }

@@ -1,4 +1,4 @@
-import { FileTextIcon, PlayIcon, RotateCwIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { ActivityIcon, FileTextIcon, PlayIcon, RotateCwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Fragment } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,7 @@ interface ContainersTableProps {
   onRestart: (container: ContainerInfo) => void;
   onDelete: (container: ContainerInfo) => void;
   onViewLogs: (container: ContainerInfo) => void;
+  onViewStats: (container: ContainerInfo) => void;
   onRetry: () => void;
 }
 
@@ -68,6 +69,7 @@ export function ContainersTable({
   onRestart,
   onDelete,
   onViewLogs,
+  onViewStats,
   onRetry,
 }: ContainersTableProps) {
   const isContainerActionPending = (
@@ -231,6 +233,20 @@ export function ContainersTable({
                 </TooltipTrigger>
                 <TooltipContent>View Logs</TooltipContent>
               </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => onViewStats(container)}
+                    disabled={busy}
+                  >
+                    <ActivityIcon className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>View Stats</TooltipContent>
+              </Tooltip>
             </div>
           </TooltipProvider>
         </TableCell>
@@ -251,7 +267,7 @@ export function ContainersTable({
             <TableHead className="h-12 px-4 font-medium">Uptime</TableHead>
             <TableHead className="h-12 px-4 font-medium">Created</TableHead>
             <TableHead className="h-12 px-4 font-medium">Command</TableHead>
-            <TableHead className="h-12 px-4 font-medium w-[120px]">
+            <TableHead className="h-12 px-4 font-medium w-[160px]">
               Actions
             </TableHead>
           </TableRow>
