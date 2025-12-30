@@ -124,7 +124,6 @@ export function NetworksTable() {
                   <TableHead>Host</TableHead>
                   <TableHead>Driver</TableHead>
                   <TableHead>Scope</TableHead>
-                  <TableHead>Containers</TableHead>
                   <TableHead className="w-[80px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -163,9 +162,6 @@ export function NetworksTable() {
                       <Badge variant="secondary">{network.driver}</Badge>
                     </TableCell>
                     <TableCell>{network.scope}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{network.containers}</Badge>
-                    </TableCell>
                     <TableCell>
                       <Tooltip>
                         <TooltipTrigger asChild>

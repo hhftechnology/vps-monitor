@@ -48,5 +48,18 @@ export async function getNetworkDetails(
     throw new Error(message || `Request failed with status ${response.status}`);
   }
 
-  return (await response.json()) as NetworkDetails;
+  const data = (await response.json()) as unknown;
+
+  if (!data || typeof data !== "object" || data === null) {
+    throw new Error("Unexpected response format");
+  }
+
+  // Backend returns { network: NetworkDetails }
+  const network = (data as { network?: unknown }).network;
+
+  if (!network || typeof network !== "object") {
+    throw new Error("Unexpected response format");
+  }
+
+  return network as NetworkDetails;
 }
