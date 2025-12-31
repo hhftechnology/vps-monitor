@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -44,8 +45,15 @@ func (ar *APIRouter) GetImages(w http.ResponseWriter, r *http.Request) {
 
 // GetImage returns details of a specific image
 func (ar *APIRouter) GetImage(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	rawID := chi.URLParam(r, "id")
 	host := r.URL.Query().Get("host")
+
+	// URL-decode the image ID (handles sha256%3A... -> sha256:...)
+	id, err := url.PathUnescape(rawID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid image ID: %v", err), http.StatusBadRequest)
+		return
+	}
 
 	if host == "" {
 		http.Error(w, "host parameter is required", http.StatusBadRequest)
@@ -65,9 +73,16 @@ func (ar *APIRouter) GetImage(w http.ResponseWriter, r *http.Request) {
 
 // RemoveImage removes an image from a host
 func (ar *APIRouter) RemoveImage(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	rawID := chi.URLParam(r, "id")
 	host := r.URL.Query().Get("host")
 	forceStr := r.URL.Query().Get("force")
+
+	// URL-decode the image ID (handles sha256%3A... -> sha256:...)
+	id, err := url.PathUnescape(rawID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid image ID: %v", err), http.StatusBadRequest)
+		return
+	}
 
 	if host == "" {
 		http.Error(w, "host parameter is required", http.StatusBadRequest)
@@ -78,7 +93,7 @@ func (ar *APIRouter) RemoveImage(w http.ResponseWriter, r *http.Request) {
 
 	result, err := ar.docker.RemoveImage(r.Context(), host, id, force)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to remove image: %v", err), http.StatusInternalServerError)
 		return
 	}
 

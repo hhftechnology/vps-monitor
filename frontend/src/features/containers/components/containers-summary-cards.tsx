@@ -9,6 +9,7 @@ interface HostInfo {
 interface SystemUsage {
   cpu: number;
   memory: number;
+  disk: number;
 }
 
 interface ContainersSummaryCardsProps {
@@ -62,7 +63,7 @@ export function ContainersSummaryCards({
               <div className="h-1.5 w-full rounded-full bg-muted">
                 <div
                   className="h-1.5 rounded-full bg-foreground"
-                  style={{ width: `${systemUsage.cpu}%` }}
+                  style={{ width: `${Math.min(systemUsage.cpu, 100)}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -72,7 +73,17 @@ export function ContainersSummaryCards({
               <div className="h-1.5 w-full rounded-full bg-muted">
                 <div
                   className="h-1.5 rounded-full bg-foreground"
-                  style={{ width: `${systemUsage.memory}%` }}
+                  style={{ width: `${Math.min(systemUsage.memory, 100)}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Disk</span>
+                <span className="font-medium">{systemUsage.disk}%</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-muted">
+                <div
+                  className="h-1.5 rounded-full bg-foreground"
+                  style={{ width: `${Math.min(systemUsage.disk, 100)}%` }}
                 />
               </div>
             </div>

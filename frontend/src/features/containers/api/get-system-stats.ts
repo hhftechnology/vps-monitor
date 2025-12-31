@@ -15,6 +15,9 @@ export interface SystemStats {
     memoryPercent: number;
     memoryTotal: number;
     memoryUsed: number;
+    diskPercent: number;
+    diskTotal: number;
+    diskUsed: number;
   };
 }
 

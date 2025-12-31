@@ -25,6 +25,11 @@ func (ar *APIRouter) GetSystemStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Override hostname if configured
+	if ar.config.Hostname != "" {
+		stats.HostInfo.Hostname = ar.config.Hostname
+	}
+
 	WriteJsonResponse(w, http.StatusOK, stats)
 }
 

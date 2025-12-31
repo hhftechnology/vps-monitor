@@ -24,12 +24,14 @@ type AlertConfig struct {
 
 type Config struct {
 	ReadOnly    bool
+	Hostname    string // Optional override for displayed hostname
 	DockerHosts []DockerHost
 	Alerts      AlertConfig
 }
 
 func NewConfig() *Config {
 	isReadOnlyMode := os.Getenv("READONLY_MODE") == "true"
+	hostname := os.Getenv("HOSTNAME_OVERRIDE") // Custom display hostname
 	dockerHosts := parseDockerHosts()
 	alertConfig := parseAlertConfig()
 
@@ -41,6 +43,7 @@ func NewConfig() *Config {
 
 	return &Config{
 		ReadOnly:    isReadOnlyMode,
+		Hostname:    hostname,
 		DockerHosts: dockerHosts,
 		Alerts:      alertConfig,
 	}

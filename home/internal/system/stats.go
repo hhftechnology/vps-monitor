@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
 )
@@ -29,6 +30,9 @@ type Usage struct {
 	MemoryPercent float64 `json:"memoryPercent"`
 	MemoryTotal   uint64  `json:"memoryTotal"`
 	MemoryUsed    uint64  `json:"memoryUsed"`
+	DiskPercent   float64 `json:"diskPercent"`
+	DiskTotal     uint64  `json:"diskTotal"`
+	DiskUsed      uint64  `json:"diskUsed"`
 }
 
 // Init configures gopsutil to use the host's /proc directory if mounted
@@ -67,6 +71,22 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 		cpuPercent = cpuPercents[0]
 	}
 
+	// Get Disk Usage for root partition
+	// If running in container with /host mounted, use /host, otherwise use /
+	diskPath := "/"
+	if _, err := os.Stat("/host"); err == nil {
+		diskPath = "/host"
+	}
+
+	var diskPercent float64
+	var diskTotal, diskUsed uint64
+	diskUsage, err := disk.UsageWithContext(ctx, diskPath)
+	if err == nil {
+		diskPercent = diskUsage.UsedPercent
+		diskTotal = diskUsage.Total
+		diskUsed = diskUsage.Used
+	}
+
 	return &SystemStats{
 		HostInfo: HostInfo{
 			Hostname:        hInfo.Hostname,
@@ -81,6 +101,9 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 			MemoryPercent: vMem.UsedPercent,
 			MemoryTotal:   vMem.Total,
 			MemoryUsed:    vMem.Used,
+			DiskPercent:   diskPercent,
+			DiskTotal:     diskTotal,
+			DiskUsed:      diskUsed,
 		},
 	}, nil
 }

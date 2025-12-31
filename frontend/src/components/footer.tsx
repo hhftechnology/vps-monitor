@@ -5,7 +5,7 @@ export function Footer() {
     <footer className="border-t bg-background">
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
         <p className="text-sm text-muted-foreground">
-          {currentYear} VPS Monitor
+          {currentYear} VPS Monitor made by HHF Technology - MIT License 
         </p>
         <div className="flex items-center gap-4">
           <a
