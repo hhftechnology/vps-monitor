@@ -1,129 +1,49 @@
-name: Docker Build and Push Multi-Arch
+name: Docker Publish
 
 on:
   push:
-    branches: [ "main", "develop" ]
-    tags: [ "v*" ]
-  pull_request:
-    branches: [ "main" ]
-
-env:
-  REGISTRY: docker.io
-  IMAGE_NAME_HOME: vps-monitor-home
-  IMAGE_NAME_AGENT: vps-monitor-agent
+    branches: [main, dev]
+    tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
-  build_and_push:
+  build-and-push:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - service: home
-            dockerfile: ./home/Dockerfile
-            context: .
-            image: vps-monitor-home
-          - service: agent
-            dockerfile: ./agent/Dockerfile
-            context: ./agent
-            image: vps-monitor-agent
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Log in to Docker Hub
-      if: github.event_name != 'pull_request'
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: hhftechnology
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=raw,value=latest,enable={{is_default_branch}}
-        labels: |
-          org.opencontainers.image.title=VPS Monitor ${{ matrix.service }}
-          org.opencontainers.image.description=Lightweight VPS monitoring solution - ${{ matrix.service }}
-          org.opencontainers.image.vendor=HHF Technology
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: hhftechnology/vps-monitor
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
 
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: ${{ matrix.context }}
-        file: ${{ matrix.dockerfile }}
-        platforms: linux/amd64,linux/arm64
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
-          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
-
-    - name: Test image
-      if: github.event_name != 'pull_request'
-      run: |
-        echo "Testing ${{ matrix.image }} image..."
-        docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:latest --version || true
-
-  security_scan:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    needs: build_and_push
-    strategy:
-      matrix:
-        image: [vps-monitor-home, vps-monitor-agent]
-    
-    steps:
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:latest
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: 'trivy-results.sarif'
-
-  update_readme:
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: build_and_push
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Update Docker Hub README
-      uses: peter-evans/dockerhub-description@v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-        repository: ${{ secrets.DOCKERHUB_USERNAME }}/vps-monitor-home
-        readme-filepath: ./README.md
-
-    - name: Update Agent Docker Hub README  
-      uses: peter-evans/dockerhub-description@v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-        repository: ${{ secrets.DOCKERHUB_USERNAME }}/vps-monitor-agent
-        readme-filepath: ./README.md
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./home/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

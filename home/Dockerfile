@@ -1,95 +1,50 @@
-# home/Dockerfile
+# Stage 1: Build the frontend
+FROM oven/bun:latest AS frontend-builder
 
-# ---- Build Stage 1: Frontend ----
-FROM node:22-alpine AS frontend-builder
+WORKDIR /frontend
 
-# Set working directory
-WORKDIR /app/web
+# Copy frontend package files
+COPY frontend/package.json frontend/bun.lock ./
 
-# Copy package files first for better caching
-COPY home/web/package*.json ./
+# Install dependencies
+RUN bun install --frozen-lockfile
 
-# Install dependencies with clean npm cache
-RUN npm install
+# Copy frontend source
+COPY frontend/ ./
 
-# Copy frontend source code
-COPY home/web/ ./
+# Build frontend (outputs to ./dist)
+RUN bun run build
 
-# Build production static files
-RUN npm run build
+# Stage 2: Build the backend with embedded frontend
+FROM --platform=$BUILDPLATFORM golang:1.23 AS backend-builder
 
-# Clean up unnecessary files
-RUN rm -rf node_modules src public package*.json
-
-# ---- Build Stage 2: Backend ----
-FROM golang:1.22-alpine AS backend-builder
-
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates
-
-# Set working directory
 WORKDIR /app
 
-# Copy Go module files and download dependencies
+# Copy Go module files
 COPY home/go.mod home/go.sum ./
+ENV GOTOOLCHAIN=auto
 RUN go mod download
 
 # Copy backend source
-COPY home/main.go ./
+COPY home/ .
 
-# Build Go binary with optimizations
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S)" \
-    -trimpath \
-    -o /home-server-binary .
+# Copy built frontend into the static embed directory
+COPY --from=frontend-builder /frontend/dist ./internal/static/dist
 
-# ---- Final Stage ----
-FROM alpine:latest
+# Build Go binary with embedded frontend
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o vps-monitor ./cmd/server
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    ca-certificates \
-    wget \
-    curl \
-    tzdata \
-    && rm -rf /var/cache/apk/*
+# Stage 3: Final runtime image with SSH client for remote Docker hosts
+FROM debian:bookworm-slim
 
-# Create non-root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates openssh-client \
+  && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy Go binary
-COPY --from=backend-builder /home-server-binary /app/home-server
+# Copy only the binary (frontend is embedded)
+COPY --from=backend-builder /app/vps-monitor ./vps-monitor
 
-# Copy frontend build output
-COPY --from=frontend-builder /app/web/build /app/web/build
-
-# Make binary executable
-RUN chmod +x /app/home-server
-
-# Change ownership to non-root user
-RUN chown -R appuser:appgroup /app
-
-# Switch to non-root user
-USER appuser
-
-# Add health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8085/api/health || exit 1
-
-# Set metadata
-LABEL maintainer="HHF Technology" \
-      description="VPS Monitor Home Server - Web dashboard and API" \
-      version="1.1.0"
-
-# Expose server port
-EXPOSE 8085
-
-# Set default environment variables
-ENV GIN_MODE=release \
-    PORT=8085
-
-# Run server
-CMD ["/app/home-server"]
+ENTRYPOINT ["/app/vps-monitor"]

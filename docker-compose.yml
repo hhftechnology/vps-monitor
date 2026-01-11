@@ -1,79 +1,17 @@
 services:
-  home-server:
-    image: hhftechnology/vps-monitor-home:latest
-    container_name: vps_monitor_home
+  vps-monitor:
+    build:
+      context: .
+      dockerfile: ./home/Dockerfile
     ports:
-      - "8085:8085"
+      - "6789:6789"
     environment:
-      - GIN_MODE=release
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 128M
-        reservations:
-          cpus: '0.1'
-          memory: 32M
-
-  agent:
-    image: hhftechnology/vps-monitor-agent:latest
-    container_name: vps_monitor_agent_local
-    # Mount necessary host directories
-    # Required for accessing host processes and Docker
-    privileged: true
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_PASSWORD_SALT=${ADMIN_PASSWORD_SALT}
+      - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
     volumes:
-      # Docker socket for container stats
-      - /var/run/docker.sock:/var/run/docker.sock:ro    
-      # Host filesystem for process information
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.ssh:/root/.ssh:ro
       - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /dev:/host/dev:ro
-      - /etc/os-release:/host/etc/os-release:ro   
-      # Host root filesystem (optional, for disk usage of specific mount points)
-      - /:/host/root:ro
-    user: "root" 
-    environment:
-      - HOME_SERVER_URL=http://home-server:8085
-      - AGENT_NAME=Local-Server
-      - AGENT_ID=local-002
-      # Tell agent where to find host proc
-      - HOST_PROC=/host/proc
-      - HOST_SYS=/host/sys
-      - HOST_ROOT=/host/root
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.2'
-          memory: 50M
-        reservations:
-          cpus: '0.05'
-          memory: 16M
-
-  # Example: Agent 2 - Uncomment for multi-agent local testing
-  # agent-local-2:
-  #   image: hhftechnology/vps-monitor-agent:latest
-  #   container_name: vps_monitor_agent_local_2
-  #   environment:
-  #     - HOME_SERVER_URL=http://home-server:8085
-  #     - AGENT_NAME=Local-Server-2
-  #     - AGENT_ID=local-002
-  #   depends_on:
-  #     home-server:
-  #       condition: service_healthy
-  #   restart: unless-stopped
-  #   networks:
-  #     - vps_monitor
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         cpus: '0.2'
-  #         memory: 64M
-  #       reservations:
-  #         cpus: '0.05'
-  #         memory: 16M
-
-networks:
-  vps_monitor:
-    driver: bridge
