@@ -1,6 +1,11 @@
-# VPS-Monitor
+<div align="center">
+    <h1>VPS-Monitor</h1>
+    <p>VPS-Monitor is an open-source, high-performance Docker container monitoring and management tool. Built for speed and ease of use, it provides real-time log streaming, container stats, image management, network visualization, alerting, and multi-host support through a clean, modern interface.</p>
 
-VPS-Monitor is an open-source, high-performance Docker container monitoring and management tool. Built for speed and ease of use, it provides real-time log streaming, container stats, image management, network visualization, alerting, and multi-host support through a clean, modern interface.
+[![Docker](https://img.shields.io/docker/pulls/hhftechnology/vps-monitor?style=flat-square)](https://hub.docker.com/r/hhftechnology/vps-monitor)
+![Stars](https://img.shields.io/github/stars/hhftechnology/vps-monitor?style=flat-square)
+[![Discord](https://img.shields.io/discord/994247717368909884?logo=discord&style=flat-square)](https://discord.gg/HDCt9MjyMJ)
+</div>
 
 ## Table of Contents
 
@@ -139,13 +144,16 @@ services:
     environment:
       - JWT_SECRET=your-secret-key-minimum-32-characters
       - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=$2a$10$YourBcryptHashHere
+      - ADMIN_PASSWORD_SALT=mysalt
+      # Hash of "admin123mysalt"
+      - ADMIN_PASSWORD=200ceb26807d6bf99fd6f4f0d1ca54d410af42fd47c58747466549a8f2762e15
 ```
 
 Generate password hash:
 
 ```bash
-htpasswd -nbBC 10 "" yourpassword | tr -d ':\n'
+# Format: echo -n "password+salt" | shasum -a 256
+echo -n "admin123mysalt" | shasum -a 256 | awk '{print $1}'
 ```
 
 ## Installation
@@ -193,7 +201,8 @@ docker run -d -p 6789:6789 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/
 |----------|-------------|---------|
 | `JWT_SECRET` | Secret key for JWT tokens (min 32 chars) | None (auth disabled) |
 | `ADMIN_USERNAME` | Admin username | None |
-| `ADMIN_PASSWORD` | Bcrypt-hashed admin password | None |
+| `ADMIN_PASSWORD` | SHA256 hash of (password + salt) | None |
+| `ADMIN_PASSWORD_SALT` | Salt for SHA256 password hashing | None |
 
 Authentication is disabled when these variables are not set.
 
@@ -202,6 +211,7 @@ Authentication is disabled when these variables are not set.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `READONLY_MODE` | Disable mutating operations | `false` |
+| `HOSTNAME_OVERRIDE` | Custom hostname to display in UI | System hostname |
 | `BACKEND_PORT` | Backend server port | `6789` |
 | `FRONTEND_PORT` | Frontend dev server port | `2345` |
 

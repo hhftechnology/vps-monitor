@@ -2,312 +2,100 @@
 
 ## Overview
 
-VPS-Monitor supports managing Docker containers across multiple Docker hosts simultaneously. This feature enables monitoring and controlling containers on local, remote, and SSH-connected Docker daemons from a single interface.
+VPS-Monitor includes native support for monitoring and managing multiple Docker hosts from a single central instance. This allows you to aggregate container status, logs, and statistics from distributed infrastructure without deploying separate monitoring agents on every machine.
 
-## Prerequisites
+## Configuration Mechanism
 
-### Server Requirements
+Multi-host support is configured exclusively through the `DOCKER_HOSTS` environment variable. This variable accepts a comma-separated list of key-value pairs defining your environments.
 
-- Go 1.21 or higher
-- Network connectivity to target Docker hosts
-- Appropriate authentication credentials for remote hosts
+### Format Specification
 
-### SSH-Based Connections
+The configuration string follows this pattern:
 
-For SSH connections to remote Docker hosts:
-
-- SSH client installed on the server
-- SSH key-based authentication configured
-- Valid SSH private key with appropriate permissions (0600)
-- Docker daemon running on remote host
-- User account with Docker socket permissions on remote host
-
-### TCP-Based Connections
-
-For TCP connections:
-
-- Docker daemon configured to listen on TCP port (typically 2375 or 2376)
-- Network access to the Docker daemon port
-- TLS certificates (recommended for production)
-
-## Configuration
-
-### Environment Variable Format
-
-Configure Docker hosts using the `DOCKER_HOSTS` environment variable. The format is:
-
-```
-DOCKER_HOSTS=name1=host1,name2=host2,name3=host3
+```text
+DOCKER_HOSTS=name1=connection_string1,name2=connection_string2,name3=connection_string3
 ```
 
-Each host entry consists of:
+- **Friendly Name**: An arbitrary alphanumeric identifier for the host (e.g., `remote-server`). This label appears in the UI drop-down menu.
+- **Connection String**: The standard Docker connection URI (e.g., `ssh://user@host` or `tcp://host:port`).
 
-- **name**: A friendly identifier for the host (alphanumeric, no spaces)
-- **host**: The Docker daemon connection URL
+## Supported Connection Protocols
 
-The `=` delimiter separates the name from the host URL, while `,` separates multiple host entries.
+### 1. Unix Socket (Local)
+Standard connection for the host where VPS-Monitor is running.
+- **URI Scheme**: `unix:///path/to/socket`
 
-### Supported Protocols
+### 2. SSH (Secure Shell)
+The recommended method for connecting to remote hosts. It provides encryption and authentication without exposing the Docker daemon port publicly.
+- **URI Scheme**: `ssh://user@hostname` or `ssh://user@ip-address`
+- **Requirements**: Public/Private key pair authentication configured.
 
-#### Unix Socket (Local)
-
-```bash
-DOCKER_HOSTS=local=unix:///var/run/docker.sock
-```
-
-Used for connecting to the local Docker daemon via Unix socket.
-
-#### SSH Protocol
-
-```bash
-DOCKER_HOSTS=remote=ssh://user@hostname
-DOCKER_HOSTS=remote=ssh://user@192.168.1.100
-```
-
-Used for secure connections to remote Docker daemons over SSH. Requires SSH key authentication.
-
-#### TCP Protocol
-
-```bash
-DOCKER_HOSTS=remote=tcp://192.168.1.100:2375
-DOCKER_HOSTS=secure=tcp://192.168.1.100:2376
-```
-
-Used for direct TCP connections to Docker daemons. Port 2376 typically indicates TLS encryption.
+### 3. TCP (Direct Network)
+Direct connection to a Docker daemon listening on a network port.
+- **URI Scheme**: `tcp://hostname:port`
+- **Note**: Ensure the target Docker daemon is configured to listen on the specified TCP port (traditionally 2375 for unencrypted, 2376 for TLS).
 
 ## Configuration Examples
 
-### Single Local Host
+### Hybrid Local and Remote Setup
+This configuration connects to the local machine and a remote satellite server over SSH.
 
 ```bash
-DOCKER_HOSTS=local=unix:///var/run/docker.sock
+DOCKER_HOSTS=hq-server=unix:///var/run/docker.sock,outpost-alpha=ssh://ops@10.50.12.5
 ```
 
-Default configuration when `DOCKER_HOSTS` is not set.
-
-### Local and Remote SSH
+### Distributed Infrastructure
+A setup managing three distinct environments using different protocols.
 
 ```bash
-DOCKER_HOSTS=local=unix:///var/run/docker.sock,production=ssh://deploy@prod.example.com
+DOCKER_HOSTS=mars-base=ssh://admin@mars.internal,jupiter-station=ssh://root@192.168.42.100,saturn-ring=tcp://saturn.ring.local:2375
 ```
 
-### Multiple Remote Hosts
+### SSH Key Management
+
+For SSH connections to work, the VPS-Monitor container must have access to a valid private key that is authorized on the target remote hosts.
+
+#### 1. Generate Identity File
+Create a dedicated SSH key pair for the monitor service:
 
 ```bash
-DOCKER_HOSTS=prod=ssh://deploy@prod.example.com,staging=ssh://deploy@staging.example.com,dev=tcp://dev.example.com:2375
+ssh-keygen -t ed25519 -C "monitor-access-key" -f ./monitor_key
 ```
 
-### Complex Multi-Environment Setup
+#### 2. Authorize Key on Remote Hosts
+Copy the public key (`monitor_key.pub`) to the `~/.ssh/authorized_keys` file of the user you intend to connect as on each remote host.
 
 ```bash
-DOCKER_HOSTS=local=unix:///var/run/docker.sock,prod-us=ssh://root@us-prod.example.com,prod-eu=ssh://root@eu-prod.example.com,staging=tcp://staging.example.com:2375
+ssh-copy-id -i ./monitor_key.pub ops@10.50.12.5
 ```
 
-## SSH Configuration
-
-### SSH Key Setup
-
-1. Generate SSH key pair if not already available:
-
-```bash
-ssh-keygen -t ed25519 -C "vps-monitor-docker-access"
-```
-
-2. Copy public key to remote host:
-
-```bash
-ssh-copy-id user@remote-host
-```
-
-3. Verify SSH access:
-
-```bash
-ssh user@remote-host docker ps
-```
-
-### Docker Compose Configuration
-
-When running VPS-Monitor via Docker Compose, mount the SSH directory:
+#### 3. Mount Keys in Docker Compose
+Mount the directory containing your keys into the container. The container looks for keys in `/root/.ssh` by default.
 
 ```yaml
 services:
   vps-monitor:
-    volumes:
-      - ~/.ssh:/root/.ssh:ro
-```
-
-This provides the container access to your SSH keys for authentication.
-
-### SSH Agent Forwarding
-
-For enhanced security, use SSH agent forwarding instead of mounting keys:
-
-```yaml
-services:
-  vps-monitor:
+    image: ghcr.io/hhftechnology/vps-monitor:latest
     environment:
-      - SSH_AUTH_SOCK=/ssh-agent
-    volumes:
-      - ${SSH_AUTH_SOCK}:/ssh-agent
-```
-
-### Host Key Verification
-
-Add remote hosts to `known_hosts` to avoid verification prompts:
-
-```bash
-ssh-keyscan remote-host >> ~/.ssh/known_hosts
-```
-
-Or disable strict host key checking (not recommended for production):
-
-```bash
-# In ~/.ssh/config
-Host *
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-```
-
-## Deployment Scenarios
-
-### Standalone Server
-
-```bash
-export DOCKER_HOSTS="local=unix:///var/run/docker.sock,remote=ssh://user@remote-host"
-./vps-monitor-home
-```
-
-### Docker Compose
-
-```yaml
-services:
-  vps-monitor:
-    image: vps-monitor:latest
-    ports:
-      - "6789:6789"
-    environment:
-      - DOCKER_HOSTS=local=unix:///var/run/docker.sock,remote=ssh://deploy@prod.example.com
+      - DOCKER_HOSTS=hq-server=unix:///var/run/docker.sock,outpost-alpha=ssh://ops@10.50.12.5
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.ssh:/root/.ssh:ro
+      # Mount the folder containing your SSH keys
+      - ./ssh-keys:/root/.ssh:ro
 ```
 
-## Troubleshooting
+## Troubleshooting Connections
 
-### Connection Issues
+### Common Issues
 
-**Symptom**: Cannot connect to remote Docker host
+**Host key verification failed**
+The container does not know the fingerprint of the remote host.
+- **Fix**: Manually connect once from the host machine to populate `known_hosts`, or mount your host's `known_hosts` file into the container.
 
-**Solutions**:
+**Permission denied (publickey)**
+The private key is not readable or not authorized.
+- **Fix**: Ensure the private key file has `600` permissions and is owned by the user running the process inside the container.
 
-1. Verify network connectivity:
-
-   ```bash
-   ping remote-host
-   telnet remote-host 22  # for SSH
-   telnet remote-host 2375  # for TCP
-   ```
-
-2. Check SSH authentication:
-
-   ```bash
-   ssh -v user@remote-host docker ps
-   ```
-
-3. Verify Docker daemon is running:
-
-   ```bash
-   ssh user@remote-host systemctl status docker
-   ```
-
-4. Check Docker daemon configuration:
-   ```bash
-   ssh user@remote-host cat /etc/docker/daemon.json
-   ```
-
-### Permission Issues
-
-**Symptom**: Permission denied errors when accessing Docker
-
-**Solutions**:
-
-1. Add user to docker group on remote host:
-
-   ```bash
-   sudo usermod -aG docker username
-   ```
-
-2. Verify Docker socket permissions:
-
-   ```bash
-   ls -l /var/run/docker.sock
-   ```
-
-3. Check SELinux/AppArmor policies if applicable
-
-### SSH Key Issues
-
-**Symptom**: SSH authentication failures
-
-**Solutions**:
-
-1. Verify key permissions:
-
-   ```bash
-   chmod 600 ~/.ssh/id_ed25519
-   chmod 644 ~/.ssh/id_ed25519.pub
-   chmod 700 ~/.ssh
-   ```
-
-2. Check SSH agent:
-
-   ```bash
-   ssh-add -l
-   ssh-add ~/.ssh/id_ed25519
-   ```
-
-3. Test SSH connection:
-   ```bash
-   ssh -vvv user@remote-host
-   ```
-
-### Invalid Configuration
-
-**Symptom**: Server fails to start with configuration error
-
-**Solutions**:
-
-1. Validate `DOCKER_HOSTS` format:
-
-   - Ensure `=` separator between name and host
-   - Ensure `,` separator between entries
-   - Check for trailing commas or spaces
-
-2. Verify host URLs:
-
-   - SSH: `ssh://user@host` (not `ssh:user@host`)
-   - TCP: `tcp://host:port` (not `tcp:host:port`)
-   - Unix: `unix:///path/to/socket` (three slashes)
-
-3. Check for special characters in host names:
-   - Use only alphanumeric characters and hyphens
-   - Avoid spaces, special characters in friendly names
-
-## Migration from Single-Host
-
-### Upgrading Existing Deployments
-
-1. Current single-host setups will continue to work without changes
-2. Default configuration uses local Unix socket if `DOCKER_HOSTS` is not set
-3. Add `DOCKER_HOSTS` environment variable to expand to multiple hosts
-4. No database migration required
-5. Frontend automatically adapts to single or multi-host mode
-
-### Backward Compatibility
-
-The system maintains backward compatibility:
-
-- Existing container operations work on the default host
-- API responses include host information even for single-host setups
-- Frontend displays host filter even with single host configured
-- No breaking changes to existing API contracts
+**Cannot connect to the Docker daemon**
+The user on the remote host may not be in the `docker` group.
+- **Fix**: Run `sudo usermod -aG docker <username>` on the remote machine.
