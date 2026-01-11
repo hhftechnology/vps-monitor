@@ -46,7 +46,7 @@ function LoginPage() {
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold tracking-tight">VPS-Monitor</h1>
           <p className="text-sm text-muted-foreground">
-            Container management shouldn't be that hard
+            VPS/VM monitoring made simple.
           </p>
         </div>
 
