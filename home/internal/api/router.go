@@ -58,9 +58,14 @@ func NewRouter(docker *docker.MultiHostClient, authService *auth.Service, config
 			WebhookEnabled:  config.Alerts.WebhookURL != "",
 		})
 	} else {
-		// Create handlers with nil monitor (alerts disabled)
+		// Create handlers with nil monitor (alerts disabled) but preserve the
+		// configured/default thresholds so clients can still display accurate config.
 		r.alertHandlers = NewAlertHandlers(nil, &models.AlertConfigResponse{
-			Enabled: false,
+			Enabled:         config.Alerts.Enabled,
+			CPUThreshold:    config.Alerts.CPUThreshold,
+			MemoryThreshold: config.Alerts.MemoryThreshold,
+			CheckInterval:   config.Alerts.CheckInterval.String(),
+			WebhookEnabled:  config.Alerts.WebhookURL != "",
 		})
 	}
 
@@ -106,6 +111,7 @@ func (ar *APIRouter) Routes() *chi.Mux {
 
 				protected.Get("/auth/me", authHandlers.GetMe)
 				// protected.Get("/system/stats", ar.GetSystemStats) // Moved to public
+				protected.Post("/devices/register", ar.RegisterDevice)
 				ar.registerContainerRoutes(protected)
 				ar.registerImageRoutes(protected)
 				ar.registerNetworkRoutes(protected)
@@ -115,6 +121,7 @@ func (ar *APIRouter) Routes() *chi.Mux {
 		}
 
 		// r.Get("/system/stats", ar.GetSystemStats) // Already registered above
+		r.Post("/devices/register", ar.RegisterDevice)
 		ar.registerContainerRoutes(r)
 		ar.registerImageRoutes(r)
 		ar.registerNetworkRoutes(r)

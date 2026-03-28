@@ -99,15 +99,30 @@ See the [Multi-Host Setup Guide](./multi-host.md) for detailed configuration.
 - Clean dashboard with summary cards
 - Light, dark, and system theme support
 - Responsive design for mobile, tablet, and desktop
+- Dedicated Capacitor-based mobile app in `mobile/`
+- Mobile routes for dashboard, stats, containers, images, networks, and alerts
+- Mobile routes for walkthrough and About Us
 - URL state persistence for shareable views
 - Accessible UI components with Radix UI
 
 ### Authentication and Security
 
 - Optional JWT-based authentication
-- Bcrypt password hashing
+- SHA256 password+salt credential hashing
 - Read-only mode support
 - Per-request authorization
+
+### Mobile App
+
+- React + Vite + Capacitor mobile client under `mobile/`
+- Authenticated login and URL-only login
+- First-launch walkthrough with replay support
+- About Us page with app metadata and support links
+- Mobile dashboard with system stats and container cards
+- Dedicated mobile stats page for running containers
+- Container detail support for logs, live stats, terminal, and env variables
+- Images, networks, and alerts screens adapted for mobile
+- Mobile API smoke test and production checklist included in the repo
 
 ## Quick Start
 
@@ -130,6 +145,43 @@ docker compose up -d
 ```
 
 Access the dashboard at `http://localhost:6789`
+
+### Mobile Quick Start
+
+Run the backend:
+
+```bash
+cd home
+go run ./cmd/server
+```
+
+In another terminal, run the mobile client:
+
+```bash
+cd mobile
+npm install
+npm run dev
+```
+
+Then:
+
+1. Open the mobile app in a browser, emulator, or Capacitor shell
+2. Connect to your backend URL, for example `http://localhost:6789`
+3. Log in if authentication is enabled
+4. Complete the walkthrough on first launch
+5. Validate the API first with:
+
+```bash
+chmod +x home/scripts/mobile-api-smoke.sh
+VPS_MONITOR_USERNAME=admin \
+VPS_MONITOR_PASSWORD='your-password' \
+home/scripts/mobile-api-smoke.sh http://localhost:6789
+```
+
+For the full mobile validation flow, see:
+
+- `mobile/README.md`
+- `mobile/MOBILE_PROD_CHECKLIST.md`
 
 ### With Authentication
 
@@ -161,8 +213,9 @@ echo -n "admin123mysalt" | shasum -a 256 | awk '{print $1}'
 ### Prerequisites
 
 - Docker 20.10 or higher
-- Go 1.23 or higher (for building from source)
+- Go 1.24 or higher (for building from source)
 - Node.js 20 or higher with Bun (for frontend development)
+- Node.js 20 or higher with npm (for mobile development)
 
 ### From Source
 
@@ -179,6 +232,11 @@ go build -o vps-monitor ./cmd/server
 cd ../frontend
 bun install
 bun run build
+
+# Build mobile web bundle
+cd ../mobile
+npm install
+npm run build
 
 # Run
 ./vps-monitor
@@ -290,14 +348,16 @@ GET    /api/v1/containers/{id}?host={host}   # Get container details
 POST   /api/v1/containers/{id}/start         # Start container
 POST   /api/v1/containers/{id}/stop          # Stop container
 POST   /api/v1/containers/{id}/restart       # Restart container
-DELETE /api/v1/containers/{id}/remove        # Remove container
-GET    /api/v1/containers/{id}/logs          # Get container logs
-GET    /api/v1/containers/{id}/logs/stream   # Stream logs (SSE)
+POST   /api/v1/containers/{id}/remove        # Remove container
+GET    /api/v1/containers/{id}/logs/parsed   # Get or stream parsed logs
 GET    /api/v1/containers/{id}/stats         # Stream stats (WebSocket)
-GET    /api/v1/containers/{id}/terminal      # Terminal access (WebSocket)
+GET    /api/v1/containers/{id}/stats/once    # Get one stats snapshot
+GET    /api/v1/containers/{id}/exec          # Terminal access (WebSocket)
 GET    /api/v1/containers/{id}/env           # Get environment variables
 PUT    /api/v1/containers/{id}/env           # Update environment variables
 ```
+
+Note: container terminal access is implemented on `/api/v1/containers/{id}/exec`. Older references to `/api/v1/containers/{id}/terminal` are legacy naming and not the current documented route.
 
 ### Images
 
@@ -321,12 +381,19 @@ GET /api/v1/networks/{id}?host={host}    # Get network details
 GET  /api/v1/alerts                      # List all alerts
 GET  /api/v1/alerts/config               # Get alert configuration
 POST /api/v1/alerts/{id}/acknowledge     # Acknowledge an alert
+POST /api/v1/alerts/acknowledge-all      # Acknowledge all alerts
 ```
 
 ### System
 
 ```
 GET /api/v1/system/stats    # Get system statistics
+```
+
+### Devices
+
+```
+POST /api/v1/devices/register   # Accept mobile device registration payload
 ```
 
 ## Architecture
@@ -392,10 +459,26 @@ frontend/src/
     utils.ts               # Helper functions
 ```
 
+### Mobile App (React + Capacitor)
+
+```
+mobile/
+  src/
+    App.tsx               # Mobile router and shell
+    pages/                # Mobile route screens
+    components/           # Mobile UI and feature components
+    hooks/                # Mobile data/realtime hooks
+    lib/api-client.ts     # Shared mobile HTTP/WS client helpers
+    lib/onboarding.ts     # Walkthrough persistence helpers
+    lib/push-notifications.ts
+  MOBILE_PROD_CHECKLIST.md
+  README.md
+```
+
 ### Key Technologies
 
 **Backend:**
-- Go 1.23+
+- Go 1.24+
 - Chi v5 router
 - Docker SDK v28
 - gorilla/websocket
@@ -430,6 +513,45 @@ bun run dev
 
 The dev server runs on port 2345 with API proxy to localhost:6789.
 
+### Mobile Development
+
+```bash
+cd mobile
+npm install
+npm run dev
+```
+
+Typecheck, lint, and test the mobile app:
+
+```bash
+cd mobile
+npx tsc -p tsconfig.app.json --noEmit
+npm run lint
+npm test
+```
+
+Build the mobile web bundle:
+
+```bash
+cd mobile
+npm run build
+```
+
+Capacitor workflows:
+
+```bash
+cd mobile
+npm run build:mobile
+npm run cap:sync
+npm run cap:android
+npm run cap:ios
+```
+
+The mobile app now also includes:
+- a first-launch walkthrough
+- replay support from the header menu
+- an About Us page with app/version/support info
+
 ### Running Tests
 
 ```bash
@@ -440,7 +562,24 @@ go test ./...
 # Frontend
 cd frontend
 bun run test
+
+# Mobile
+cd ../mobile
+npm test
 ```
+
+### Mobile API smoke test
+
+```bash
+chmod +x home/scripts/mobile-api-smoke.sh
+VPS_MONITOR_USERNAME=admin \
+VPS_MONITOR_PASSWORD='your-password' \
+home/scripts/mobile-api-smoke.sh https://your-server:6789
+```
+
+For the full real-device/mobile validation flow, see:
+
+- `mobile/MOBILE_PROD_CHECKLIST.md`
 
 ### Building for Production
 
@@ -452,6 +591,10 @@ go build -o vps-monitor ./cmd/server
 # Frontend
 cd frontend
 bun run build
+
+# Mobile
+cd ../mobile
+npm run build
 ```
 
 The frontend build output is served by the backend from the embedded filesystem.
@@ -473,12 +616,13 @@ sudo usermod -aG docker $USER
 
 ### Authentication not working
 
-1. Verify all three environment variables are set:
+1. Verify all four environment variables are set:
    - `JWT_SECRET`
    - `ADMIN_USERNAME`
    - `ADMIN_PASSWORD`
+   - `ADMIN_PASSWORD_SALT`
 
-2. Ensure password is bcrypt-hashed, not plaintext
+2. Ensure `ADMIN_PASSWORD` is the SHA256 hash of `password + salt`, not plaintext
 
 3. Check JWT_SECRET is at least 32 characters
 
