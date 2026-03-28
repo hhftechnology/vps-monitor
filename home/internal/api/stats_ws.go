@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -26,6 +27,13 @@ func (ar *APIRouter) HandleContainerStats(w http.ResponseWriter, r *http.Request
 	}
 	defer ws.Close()
 
+	// Set up ping/pong keep-alive
+	ws.SetReadDeadline(time.Now().Add(wsPongTimeout))
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(wsPongTimeout))
+		return nil
+	})
+
 	ctx := r.Context()
 
 	// Start streaming stats from Docker
@@ -38,13 +46,16 @@ func (ar *APIRouter) HandleContainerStats(w http.ResponseWriter, r *http.Request
 		for {
 			_, _, err := ws.ReadMessage()
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNoStatusReceived) {
 					log.Printf("stats websocket closed unexpectedly: %v", err)
 				}
 				return
 			}
 		}
 	}()
+
+	pingTicker := time.NewTicker(wsPingInterval)
+	defer pingTicker.Stop()
 
 	// Stream stats to WebSocket
 	for {
@@ -58,6 +69,7 @@ func (ar *APIRouter) HandleContainerStats(w http.ResponseWriter, r *http.Request
 				log.Printf("failed to marshal stats: %v", err)
 				continue
 			}
+			ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			if err := ws.WriteMessage(websocket.TextMessage, data); err != nil {
 				log.Printf("failed to write stats to websocket: %v", err)
 				return
@@ -66,13 +78,19 @@ func (ar *APIRouter) HandleContainerStats(w http.ResponseWriter, r *http.Request
 		case err := <-errCh:
 			if err != nil {
 				log.Printf("stats stream error: %v", err)
-				// Send error to client
 				errMsg := map[string]string{"error": err.Error()}
 				if data, _ := json.Marshal(errMsg); data != nil {
+					ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 					_ = ws.WriteMessage(websocket.TextMessage, data)
 				}
 			}
 			return
+
+		case <-pingTicker.C:
+			ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 
 		case <-done:
 			return
