@@ -70,13 +70,54 @@ func (ar *APIRouter) GetContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	container, err := ar.docker.GetContainer(r.Context(), host, id)
+	inspect, err := ar.docker.GetContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Transform InspectResponse into a flat structure matching the frontend ContainerDetailData interface.
+	// The raw InspectResponse has "State" as an object (e.g. {Status:"running", Running:true}),
+	// but the frontend expects "state" as a simple string like the list endpoint returns.
+	name := inspect.Name
+	if len(name) > 0 && name[0] == '/' {
+		name = name[1:]
+	}
+
+	var command string
+	if inspect.Config != nil && len(inspect.Config.Cmd) > 0 {
+		command = fmt.Sprintf("%v", inspect.Config.Cmd)
+	}
+
+	var image string
+	if inspect.Config != nil {
+		image = inspect.Config.Image
+	}
+
+	var labels map[string]string
+	if inspect.Config != nil {
+		labels = inspect.Config.Labels
+	}
+
+	state := ""
+	status := ""
+	if inspect.State != nil {
+		state = inspect.State.Status
+		status = inspect.State.Status
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"container": container,
+		"container": map[string]any{
+			"id":      inspect.ID,
+			"names":   []string{name},
+			"image":   image,
+			"state":   state,
+			"status":  status,
+			"host":    host,
+			"created": inspect.Created,
+			"command": command,
+			"labels":  labels,
+		},
 	})
 }
 
