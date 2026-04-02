@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,12 @@ const (
 type ResourceInfo struct {
 	Type ResourceType
 	UUID string
+}
+
+var safeIdentifierRegex = regexp.MustCompile("^[A-Za-z0-9_-]+$")
+
+func isSafeIdentifier(value string) bool {
+	return safeIdentifierRegex.MatchString(value)
 }
 
 type Client struct {
@@ -162,6 +169,10 @@ func (c *Client) SyncEnvVars(ctx context.Context, resource *ResourceInfo, envVar
 		return fmt.Errorf("coolify: syncing env vars for database resources is not supported")
 	}
 
+	if !isSafeIdentifier(resource.UUID) {
+		return fmt.Errorf("coolify: invalid resource UUID format")
+	}
+
 	// 1. Fetch current env vars from Coolify to find deletions
 	existing, err := c.listEnvVars(ctx, resource)
 	if err != nil {
@@ -227,6 +238,12 @@ func (c *Client) listEnvVars(ctx context.Context, resource *ResourceInfo) ([]coo
 }
 
 func (c *Client) deleteEnvVar(ctx context.Context, resource *ResourceInfo, envUUID string) error {
+	if !isSafeIdentifier(resource.UUID) {
+		return fmt.Errorf("coolify: invalid resource UUID format")
+	}
+	if !isSafeIdentifier(envUUID) {
+		return fmt.Errorf("coolify: invalid env UUID format")
+	}
 	path := fmt.Sprintf("/api/v1/%ss/%s/envs/%s", resource.Type, resource.UUID, envUUID)
 	_, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	return err

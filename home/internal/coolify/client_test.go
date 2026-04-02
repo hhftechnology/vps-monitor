@@ -117,6 +117,69 @@ func TestSyncEnvVarsReturnsDeletionErrors(t *testing.T) {
 	}
 }
 
+func TestSyncEnvVarsRejectsInvalidResourceUUID(t *testing.T) {
+	requestCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requestCalled = true
+		return response(http.StatusOK, `[]`), nil
+	})
+
+	client := &Client{
+		baseURL:    mustParseURL(t, "https://example.com"),
+		allowedIPs: map[string]struct{}{"127.0.0.1": {}},
+		apiToken:   "token",
+		httpClient: &http.Client{Transport: transport},
+	}
+
+	err := client.SyncEnvVars(context.Background(), &ResourceInfo{
+		Type: ResourceTypeApplication,
+		UUID: "bad/resource",
+	}, map[string]string{"KEY": "VALUE"})
+	if err == nil || !strings.Contains(err.Error(), "invalid resource UUID format") {
+		t.Fatalf("expected invalid resource UUID error, got %v", err)
+	}
+	if requestCalled {
+		t.Fatalf("expected no request for invalid resource UUID")
+	}
+}
+
+func TestDeleteEnvVarRejectsInvalidIdentifiers(t *testing.T) {
+	requestCalled := false
+	client := &Client{
+		baseURL:    mustParseURL(t, "https://example.com"),
+		allowedIPs: map[string]struct{}{"127.0.0.1": {}},
+		apiToken:   "token",
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requestCalled = true
+				return response(http.StatusOK, `{}`), nil
+			}),
+		},
+	}
+
+	err := client.deleteEnvVar(context.Background(), &ResourceInfo{
+		Type: ResourceTypeApplication,
+		UUID: "resource-1",
+	}, "../bad")
+	if err == nil || !strings.Contains(err.Error(), "invalid env UUID format") {
+		t.Fatalf("expected invalid env UUID error, got %v", err)
+	}
+	if requestCalled {
+		t.Fatalf("expected no HTTP request for invalid env UUID")
+	}
+
+	err = client.deleteEnvVar(context.Background(), &ResourceInfo{
+		Type: ResourceTypeApplication,
+		UUID: "resource/../../bad",
+	}, "env_1")
+	if err == nil || !strings.Contains(err.Error(), "invalid resource UUID format") {
+		t.Fatalf("expected invalid resource UUID error, got %v", err)
+	}
+	if requestCalled {
+		t.Fatalf("expected no HTTP request for invalid resource UUID")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

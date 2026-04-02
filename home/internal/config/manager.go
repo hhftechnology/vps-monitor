@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -31,6 +32,8 @@ const (
 	SourceDefault Source = "default"
 	SourceMixed   Source = "mixed"
 )
+
+var ErrEnvironmentConfigured = errors.New("configured via environment variable")
 
 // EnvSnapshot captures which env vars are set at startup.
 type EnvSnapshot struct {
@@ -189,14 +192,28 @@ func (m *Manager) UpdateCoolifyHosts(hosts []CoolifyHostConfig) error {
 		for _, h := range hosts {
 			if envNames[h.HostName] {
 				m.mu.Unlock()
-				return fmt.Errorf("coolify host %q is defined via environment variable and cannot be managed from the UI", h.HostName)
+				return fmt.Errorf("%w: coolify host %q is defined via environment variable and cannot be managed from the UI", ErrEnvironmentConfigured, h.HostName)
 			}
 		}
 	}
+	m.mu.Unlock()
 
 	if err := validateCoolifyHosts(hosts); err != nil {
-		m.mu.Unlock()
 		return err
+	}
+
+	m.mu.Lock()
+	if m.envSnapshot.CoolifySet {
+		envNames := make(map[string]bool)
+		for _, h := range m.envConfig.CoolifyHosts {
+			envNames[h.HostName] = true
+		}
+		for _, h := range hosts {
+			if envNames[h.HostName] {
+				m.mu.Unlock()
+				return fmt.Errorf("%w: coolify host %q is defined via environment variable and cannot be managed from the UI", ErrEnvironmentConfigured, h.HostName)
+			}
+		}
 	}
 
 	oldCoolifyHosts := m.fileConfig.CoolifyHosts
