@@ -40,7 +40,7 @@ export function AuthSection({ config }: AuthSectionProps) {
       toast.error("Username is required when enabling auth");
       return;
     }
-    if (enabled && !config.enabled && !password) {
+    if (enabled && !config.passwordConfigured && !password) {
       toast.error("Password is required when first enabling auth");
       return;
     }

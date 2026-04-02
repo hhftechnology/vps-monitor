@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/config"
@@ -32,12 +34,16 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func newClient(apiURL, apiToken string) *Client {
+func newClient(apiURL, apiToken string) (*Client, error) {
+	if err := validateAPIURL(apiURL); err != nil {
+		return nil, err
+	}
+
 	return &Client{
 		apiURL:     apiURL,
 		apiToken:   apiToken,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
-	}
+	}, nil
 }
 
 // MultiClient routes Coolify API calls to the correct per-host client.
@@ -47,17 +53,25 @@ type MultiClient struct {
 
 // NewMultiClient creates a MultiClient from per-host configs.
 // Returns nil if no configs are provided.
-func NewMultiClient(hostConfigs []config.CoolifyHostConfig) *MultiClient {
+func NewMultiClient(hostConfigs []config.CoolifyHostConfig) (*MultiClient, error) {
 	if len(hostConfigs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	clients := make(map[string]*Client, len(hostConfigs))
 	for _, hc := range hostConfigs {
-		clients[hc.HostName] = newClient(hc.APIURL, hc.APIToken)
+		if _, exists := clients[hc.HostName]; exists {
+			return nil, fmt.Errorf("duplicate Coolify host name: %s", hc.HostName)
+		}
+
+		client, err := newClient(hc.APIURL, hc.APIToken)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Coolify host %s: %w", hc.HostName, err)
+		}
+		clients[hc.HostName] = client
 	}
 
-	return &MultiClient{clients: clients}
+	return &MultiClient{clients: clients}, nil
 }
 
 // GetClient returns the Coolify client for the given Docker host name.
@@ -83,7 +97,7 @@ func (c *Client) TestConnection(ctx context.Context) error {
 }
 
 // NewSingleClient creates a single Coolify client for testing connections.
-func NewSingleClient(apiURL, apiToken string) *Client {
+func NewSingleClient(apiURL, apiToken string) (*Client, error) {
 	return newClient(apiURL, apiToken)
 }
 
@@ -144,10 +158,11 @@ func (c *Client) SyncEnvVars(ctx context.Context, resource *ResourceInfo, envVar
 	}
 
 	// 2. Delete env vars that no longer exist
+	var deletionErrors []string
 	for _, ev := range existing {
 		if _, exists := envVars[ev.Key]; !exists {
 			if delErr := c.deleteEnvVar(ctx, resource, ev.UUID); delErr != nil {
-				log.Printf("Warning: failed to delete Coolify env var %s (%s): %v", ev.Key, ev.UUID, delErr)
+				deletionErrors = append(deletionErrors, fmt.Sprintf("%s (%s): %v", ev.Key, ev.UUID, delErr))
 			}
 		}
 	}
@@ -166,6 +181,10 @@ func (c *Client) SyncEnvVars(ctx context.Context, resource *ResourceInfo, envVar
 	url := fmt.Sprintf("%s/api/v1/%ss/%s/envs/bulk", c.apiURL, resource.Type, resource.UUID)
 	if _, err := c.doRequest(ctx, http.MethodPatch, url, body); err != nil {
 		return fmt.Errorf("coolify: bulk update failed: %w", err)
+	}
+
+	if len(deletionErrors) > 0 {
+		return fmt.Errorf("coolify: failed to delete stale env vars: %s", strings.Join(deletionErrors, "; "))
 	}
 
 	return nil
@@ -213,13 +232,70 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body []byte)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippetBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if readErr != nil {
+			return nil, fmt.Errorf("API returned status %d (failed to read response body: %w)", resp.StatusCode, readErr)
+		}
+		snippet := strings.TrimSpace(strings.ReplaceAll(string(snippetBytes), "\n", " "))
+		if snippet == "" {
+			snippet = "empty response"
+		}
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, snippet)
+	}
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
 	return respBody, nil
+}
+
+func validateAPIURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid API URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid API URL scheme: %s", parsed.Scheme)
+	}
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("invalid API URL host")
+	}
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		if isPrivateOrLocalIP(ip) {
+			return fmt.Errorf("API URL host is not allowed")
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve API URL host: %w", err)
+	}
+	if len(resolved) == 0 {
+		return fmt.Errorf("failed to resolve API URL host")
+	}
+	for _, addr := range resolved {
+		if isPrivateOrLocalIP(addr.IP) {
+			return fmt.Errorf("API URL host resolves to a private/local address")
+		}
+	}
+
+	return nil
+}
+
+func isPrivateOrLocalIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return true
+	}
+	return ip.IsPrivate()
 }

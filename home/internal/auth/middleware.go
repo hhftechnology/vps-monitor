@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type contextKey string
@@ -12,16 +13,37 @@ type contextKey string
 const UserContextKey contextKey = "user"
 
 // DynamicMiddleware resolves the auth service per request, supporting hot-reload.
-// If the service function returns nil, auth is disabled and the request passes through.
+// It fails closed when auth service is unavailable and only bypasses auth when explicitly disabled.
 func DynamicMiddleware(getService func() *Service) func(http.Handler) http.Handler {
+	var mu sync.RWMutex
+	var lastGoodSvc *Service
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			svc := getService()
-			if svc == nil {
+
+			if svc != nil && svc.IsDisabled() {
 				next.ServeHTTP(w, r)
 				return
 			}
-			validateAndServe(svc, next, w, r)
+
+			if svc != nil && svc.IsUsable() {
+				mu.Lock()
+				lastGoodSvc = svc
+				mu.Unlock()
+				validateAndServe(svc, next, w, r)
+				return
+			}
+
+			mu.RLock()
+			fallback := lastGoodSvc
+			mu.RUnlock()
+			if fallback != nil && fallback.IsUsable() {
+				validateAndServe(fallback, next, w, r)
+				return
+			}
+
+			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
 		})
 	}
 }

@@ -59,15 +59,18 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Auth
 	authResp := map[string]any{
-		"source":  sources.Auth,
-		"enabled": false,
+		"source":             sources.Auth,
+		"enabled":            false,
+		"passwordConfigured": false,
 	}
 	if sources.Auth == config.SourceEnv {
 		svc := ar.registry.Auth()
-		authResp["enabled"] = svc != nil
+		authResp["enabled"] = svc != nil && !svc.IsDisabled()
+		authResp["passwordConfigured"] = svc != nil && !svc.IsDisabled()
 	} else if fc.Auth != nil {
 		authResp["enabled"] = fc.Auth.Enabled
 		authResp["adminUsername"] = fc.Auth.AdminUsername
+		authResp["passwordConfigured"] = fc.Auth.AdminPasswordHash != ""
 	}
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
@@ -243,12 +246,12 @@ func (ar *APIRouter) UpdateAuth(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if req.NewPassword != "" {
-				salt, err := auth.GenerateRandomHex(32)
+				hash, err := auth.HashPassword(req.NewPassword)
 				if err != nil {
-					return nil, fmt.Errorf("failed to generate salt")
+					return nil, fmt.Errorf("failed to hash password: %w", err)
 				}
-				authCfg.AdminPasswordSalt = salt
-				authCfg.AdminPasswordHash = auth.HashPasswordSHA256(req.NewPassword, salt)
+				authCfg.AdminPasswordHash = hash
+				authCfg.AdminPasswordSalt = ""
 			}
 
 			if authCfg.AdminPasswordHash == "" {
@@ -364,7 +367,14 @@ func (ar *APIRouter) TestCoolifyHost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	client := coolify.NewSingleClient(strings.TrimRight(req.APIURL, "/"), token)
+	client, err := coolify.NewSingleClient(strings.TrimRight(req.APIURL, "/"), token)
+	if err != nil {
+		WriteJsonResponse(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": fmt.Sprintf("Connection failed: %v", err),
+		})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 

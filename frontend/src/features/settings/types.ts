@@ -32,6 +32,7 @@ export interface AuthConfig {
   source: ConfigSource;
   enabled: boolean;
   adminUsername?: string;
+  passwordConfigured: boolean;
 }
 
 export interface SettingsResponse {

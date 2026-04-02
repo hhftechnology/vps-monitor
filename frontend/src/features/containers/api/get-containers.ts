@@ -14,8 +14,8 @@ export interface GetContainersResponse {
   containers: ContainerInfo[];
   readOnly: boolean;
   hosts: DockerHost[];
-  hostErrors?: HostError[];
-  coolifyConfigured?: boolean;
+  hostErrors: HostError[];
+  coolifyConfigured: boolean;
 }
 
 export async function getContainers(): Promise<GetContainersResponse> {

@@ -39,7 +39,13 @@ func (ar *APIRouter) GetSystemStats(w http.ResponseWriter, r *http.Request) {
 func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	containersMap, hostErrors, err := ar.registry.Docker().ListContainersAllHosts(ctx)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	containersMap, hostErrors, err := dockerClient.ListContainersAllHosts(ctx)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -63,7 +69,7 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"containers":        allContainers,
-		"hosts":             ar.registry.Docker().GetHosts(),
+		"hosts":             dockerClient.GetHosts(),
 		"readOnly":          ar.registry.Config().ReadOnly,
 		"hostErrors":        hostErrorMessages,
 		"coolifyConfigured": ar.registry.Coolify() != nil,
@@ -79,7 +85,14 @@ func (ar *APIRouter) GetContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inspect, err := ar.registry.Docker().GetContainer(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	inspect, err := dockerClient.GetContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -136,7 +149,14 @@ func (ar *APIRouter) StartContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.registry.Docker().StartContainer(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	err := dockerClient.StartContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -155,7 +175,14 @@ func (ar *APIRouter) StopContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.registry.Docker().StopContainer(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	err := dockerClient.StopContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -174,7 +201,14 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.registry.Docker().RestartContainer(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	err := dockerClient.RestartContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -193,7 +227,14 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.registry.Docker().RemoveContainer(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	err := dockerClient.RemoveContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -219,7 +260,14 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	logs, err := ar.registry.Docker().GetContainerLogsParsed(host, id, options)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	logs, err := dockerClient.GetContainerLogsParsed(host, id, options)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -232,7 +280,15 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 }
 
 func (ar *APIRouter) streamParsedLogs(w http.ResponseWriter, host, id string, options models.LogOptions) {
-	stream, err := ar.registry.Docker().StreamContainerLogsParsed(host, id, options)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	if dockerClient == nil {
+		releaseDocker()
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer releaseDocker()
+
+	stream, err := dockerClient.StreamContainerLogsParsed(host, id, options)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -313,7 +369,14 @@ func (ar *APIRouter) GetEnvVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	envVariables, err := ar.registry.Docker().GetEnvVariables(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	envVariables, err := dockerClient.GetEnvVariables(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -346,7 +409,14 @@ func (ar *APIRouter) UpdateEnvVariables(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	newContainerID, labels, err := ar.registry.Docker().SetEnvVariables(r.Context(), host, id, envVariables.Env)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	newContainerID, labels, err := dockerClient.SetEnvVariables(r.Context(), host, id, envVariables.Env)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

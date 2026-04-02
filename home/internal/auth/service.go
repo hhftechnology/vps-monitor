@@ -28,6 +28,7 @@ type Service struct {
 	adminPasswordHash string
 	sha256Salt        string
 	tokenExpiration   time.Duration
+	disabled          bool
 }
 
 type Claims struct {
@@ -37,7 +38,7 @@ type Claims struct {
 }
 
 // NewService creates a new auth service
-// Returns nil (no error) if auth environment variables are not set, indicating auth is disabled
+// Returns a disabled service (no error) if auth environment variables are not set.
 func NewService() (*Service, error) {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	adminUsername := os.Getenv("ADMIN_USERNAME")
@@ -46,7 +47,7 @@ func NewService() (*Service, error) {
 
 	// If none of the auth variables are set, return nil to indicate auth is disabled
 	if jwtSecret == "" && adminUsername == "" && (adminPasswordHash == "" && sha256Salt == "") {
-		return nil, nil
+		return NewDisabledService(), nil
 	}
 
 	// If some but not all are set, return an error
@@ -60,21 +61,49 @@ func NewService() (*Service, error) {
 		adminPasswordHash: adminPasswordHash,
 		sha256Salt:        sha256Salt,
 		tokenExpiration:   7 * 24 * time.Hour, // 7 days
+		disabled:          false,
 	}, nil
+}
+
+func NewDisabledService() *Service {
+	return &Service{disabled: true}
+}
+
+func (s *Service) IsDisabled() bool {
+	return s != nil && s.disabled
+}
+
+func (s *Service) IsUsable() bool {
+	return s != nil && !s.disabled && len(s.jwtSecret) > 0 && s.adminUsername != "" && s.adminPasswordHash != ""
 }
 
 // ValidateCredentials checks if the provided credentials are valid
 func (s *Service) ValidateCredentials(username, password string) error {
+	if !s.IsUsable() {
+		return ErrInvalidCredentials
+	}
+
 	if username != s.adminUsername {
 		return ErrInvalidCredentials
 	}
 
-	hash := sha256.Sum256([]byte(password + s.sha256Salt))
-	if hex.EncodeToString(hash[:]) != s.adminPasswordHash {
+	if isBcryptHash(s.adminPasswordHash) {
+		if err := bcrypt.CompareHashAndPassword([]byte(s.adminPasswordHash), []byte(password)); err != nil {
+			return ErrInvalidCredentials
+		}
+		return nil
+	}
+
+	if s.sha256Salt == "" {
 		return ErrInvalidCredentials
 	}
 
-	return nil
+	hash := sha256.Sum256([]byte(password + s.sha256Salt))
+	if hex.EncodeToString(hash[:]) == s.adminPasswordHash {
+		return nil
+	}
+
+	return ErrInvalidCredentials
 }
 
 // GenerateToken creates a new JWT token for the user
@@ -140,7 +169,7 @@ func GetUserFromClaims(claims *Claims) models.User {
 // Returns nil if the config is nil, disabled, or incomplete.
 func NewServiceFromFileConfig(cfg *config.FileAuthConfig) *Service {
 	if cfg == nil || !cfg.Enabled {
-		return nil
+		return NewDisabledService()
 	}
 	if cfg.JWTSecret == "" || cfg.AdminUsername == "" || cfg.AdminPasswordHash == "" {
 		return nil
@@ -151,6 +180,7 @@ func NewServiceFromFileConfig(cfg *config.FileAuthConfig) *Service {
 		adminPasswordHash: cfg.AdminPasswordHash,
 		sha256Salt:        cfg.AdminPasswordSalt,
 		tokenExpiration:   7 * 24 * time.Hour,
+		disabled:          false,
 	}
 }
 
@@ -176,4 +206,8 @@ func HashPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
+}
+
+func isBcryptHash(hash string) bool {
+	return len(hash) >= 4 && hash[0] == '$' && hash[1] == '2'
 }

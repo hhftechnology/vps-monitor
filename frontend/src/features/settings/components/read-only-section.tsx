@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -21,11 +22,28 @@ interface ReadOnlySectionProps {
 export function ReadOnlySection({ config }: ReadOnlySectionProps) {
   const isEnv = config.source === "env";
   const mutation = useUpdateReadOnly();
+  const [optimisticChecked, setOptimisticChecked] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!mutation.isPending) {
+      setOptimisticChecked(null);
+    }
+  }, [config.value, mutation.isPending]);
+
+  const checked = optimisticChecked ?? config.value;
 
   function handleToggle(checked: boolean) {
+    const previous = optimisticChecked ?? config.value;
+    setOptimisticChecked(checked);
     mutation.mutate(checked, {
-      onSuccess: (msg) => toast.success(msg),
-      onError: (err) => toast.error(err.message),
+      onSuccess: (msg) => {
+        toast.success(msg);
+        setOptimisticChecked(null);
+      },
+      onError: (err) => {
+        toast.error(err.message);
+        setOptimisticChecked(previous);
+      },
     });
   }
 
@@ -45,12 +63,12 @@ export function ReadOnlySection({ config }: ReadOnlySectionProps) {
         <div className="flex items-center gap-3">
           <Switch
             id="read-only"
-            checked={config.value}
+            checked={checked}
             onCheckedChange={handleToggle}
             disabled={isEnv || mutation.isPending}
           />
           <Label htmlFor="read-only" className="cursor-pointer">
-            {config.value ? "Enabled" : "Disabled"}
+            {checked ? "Enabled" : "Disabled"}
           </Label>
         </div>
       </CardContent>

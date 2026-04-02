@@ -207,7 +207,7 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 // handleLogin delegates to the dynamic auth service.
 func (ar *APIRouter) handleLogin(w http.ResponseWriter, r *http.Request) {
 	svc := ar.registry.Auth()
-	if svc == nil {
+	if svc == nil || svc.IsDisabled() {
 		http.Error(w, "Authentication is not enabled", http.StatusNotFound)
 		return
 	}

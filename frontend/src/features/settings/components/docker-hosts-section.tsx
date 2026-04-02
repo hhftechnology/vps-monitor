@@ -52,7 +52,7 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
   const [testResults, setTestResults] = useState<
     Record<string, { success: boolean; message: string }>
   >({});
-  const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [testingKeys, setTestingKeys] = useState<Set<string>>(new Set());
 
   const updateMutation = useUpdateDockerHosts();
   const testMutation = useTestDockerHost();
@@ -133,7 +133,11 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
   }
 
   function handleTest(key: string, hostUrl: string) {
-    setTestingKey(key);
+    setTestingKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
     setTestResults((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -152,14 +156,22 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
                 : result.message,
             },
           }));
-          setTestingKey(null);
+          setTestingKeys((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
         },
         onError: (err) => {
           setTestResults((prev) => ({
             ...prev,
             [key]: { success: false, message: err.message },
           }));
-          setTestingKey(null);
+          setTestingKeys((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
         },
       },
     );
@@ -235,10 +247,10 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
             <Button
               variant="ghost"
               size="sm"
-              disabled={testingKey === testKey}
+              disabled={testingKeys.has(testKey)}
               onClick={() => handleTest(testKey, h.host)}
             >
-              {testingKey === testKey ? <Spinner className="size-3" /> : "Test"}
+              {testingKeys.has(testKey) ? <Spinner className="size-3" /> : "Test"}
             </Button>
             {!isEnvRow && fileIndex !== undefined && (
               <>

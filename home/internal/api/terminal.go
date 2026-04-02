@@ -104,12 +104,18 @@ func (ar *APIRouter) HandleTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ar *APIRouter) startExecSession(ctx context.Context, host, containerID string) (string, *types.HijackedResponse, error) {
-	execID, err := ar.registry.Docker().CreateExec(ctx, host, containerID)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		return "", nil, fmt.Errorf("docker client unavailable")
+	}
+
+	execID, err := dockerClient.CreateExec(ctx, host, containerID)
 	if err != nil {
 		return "", nil, fmt.Errorf("create exec failed: %w", err)
 	}
 
-	resp, err := ar.registry.Docker().AttachExec(ctx, host, execID)
+	resp, err := dockerClient.AttachExec(ctx, host, execID)
 	if err != nil {
 		return "", nil, fmt.Errorf("attach exec failed: %w", err)
 	}
@@ -165,9 +171,16 @@ func (ar *APIRouter) forwardClientInput(
 		if messageType == websocket.TextMessage {
 			var msg ResizeMessage
 			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "resize" {
-				if err := ar.registry.Docker().ResizeExec(ctx, host, execID, msg.Rows, msg.Cols); err != nil {
+				dockerClient, releaseDocker := ar.registry.AcquireDocker()
+				if dockerClient == nil {
+					releaseDocker()
+					log.Printf("failed to resize terminal: docker client unavailable")
+					continue
+				}
+				if err := dockerClient.ResizeExec(ctx, host, execID, msg.Rows, msg.Cols); err != nil {
 					log.Printf("failed to resize terminal: %v", err)
 				}
+				releaseDocker()
 				continue
 			}
 		}

@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/alerts"
 	"github.com/hhftechnology/vps-monitor/internal/api"
@@ -31,14 +30,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize auth service: %v\nPlease ensure ALL auth environment variables are set: JWT_SECRET, ADMIN_USERNAME, and ADMIN_PASSWORD.", err)
 	}
-	if authService == nil {
+	if authService != nil && authService.IsDisabled() {
 		fc := manager.FileConfigSnapshot()
 		if fc.Auth != nil && fc.Auth.Enabled {
 			authService = auth.NewServiceFromFileConfig(fc.Auth)
 		}
 	}
 
-	if authService == nil {
+	if authService == nil || authService.IsDisabled() {
 		log.Println("Authentication is DISABLED - no auth environment variables detected")
 		log.Println("   To enable authentication, set: JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD")
 	} else {
@@ -53,7 +52,10 @@ func main() {
 	}
 
 	// Coolify client
-	coolifyClient := coolify.NewMultiClient(cfg.CoolifyHosts)
+	coolifyClient, err := coolify.NewMultiClient(cfg.CoolifyHosts)
+	if err != nil {
+		log.Fatalf("Failed to create Coolify client: %v", err)
+	}
 	if coolifyClient != nil {
 		log.Printf("Coolify integration is ENABLED (%d host configs)", len(cfg.CoolifyHosts))
 	} else {
@@ -88,15 +90,19 @@ func main() {
 		if err != nil {
 			log.Printf("Warning: failed to recreate Docker clients after config change: %v", err)
 		} else {
-			old := registry.SwapDocker(newDocker)
-			go func() {
-				time.Sleep(30 * time.Second)
-				old.Close()
-			}()
+			registry.SwapDocker(newDocker)
+			if alertMonitor != nil {
+				alertMonitor.UpdateDockerClient(newDocker)
+			}
 		}
 
 		// Recreate Coolify clients
-		registry.SwapCoolify(coolify.NewMultiClient(newCfg.CoolifyHosts))
+		newCoolify, err := coolify.NewMultiClient(newCfg.CoolifyHosts)
+		if err != nil {
+			log.Printf("Warning: failed to recreate Coolify clients after config change: %v", err)
+		} else {
+			registry.SwapCoolify(newCoolify)
+		}
 
 		// Recreate auth service from file config (env-based auth is immutable)
 		fc := manager.FileConfigSnapshot()

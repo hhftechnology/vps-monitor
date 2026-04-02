@@ -37,7 +37,13 @@ func (ar *APIRouter) HandleContainerStats(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 
 	// Start streaming stats from Docker
-	statsCh, errCh := ar.registry.Docker().StreamContainerStats(ctx, host, id)
+	statsCh, errCh, err := ar.registry.StreamContainerStats(ctx, host, id)
+	if err != nil {
+		log.Printf("failed to start stats stream: %v", err)
+		ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"error":"docker client unavailable"}`))
+		return
+	}
 
 	// Handle WebSocket close from client
 	done := make(chan struct{})
@@ -111,7 +117,14 @@ func (ar *APIRouter) GetContainerStatsOnce(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	stats, err := ar.registry.Docker().GetContainerStatsOnce(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	stats, err := dockerClient.GetContainerStatsOnce(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

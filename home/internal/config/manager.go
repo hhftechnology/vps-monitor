@@ -40,12 +40,12 @@ type Manager struct {
 	mu          sync.RWMutex
 	filePath    string
 	envSnapshot EnvSnapshot
-	envConfig   *Config          // config derived purely from env vars
-	fileConfig  FileConfig       // config from file
-	merged      *Config          // final merged config
-	sources     ConfigSources    // per-category source tracking
-	onChange    []func(*Config)  // callbacks when config changes
-	generation  uint64           // incremented on each merge to detect stale callbacks
+	envConfig   *Config         // config derived purely from env vars
+	fileConfig  FileConfig      // config from file
+	merged      *Config         // final merged config
+	sources     ConfigSources   // per-category source tracking
+	onChange    []func(*Config) // callbacks when config changes
+	generation  uint64          // incremented on each merge to detect stale callbacks
 }
 
 // ConfigSources tracks the source of each config category.
@@ -341,15 +341,16 @@ func (m *Manager) remerge() {
 	cbs := make([]func(*Config), len(m.onChange))
 	copy(cbs, m.onChange)
 	m.mu.Unlock()
-	for _, fn := range cbs {
-		m.mu.RLock()
-		stale := m.generation != gen
+
+	m.mu.RLock()
+	if m.generation != gen {
 		m.mu.RUnlock()
-		if stale {
-			return
-		}
+		return
+	}
+	for _, fn := range cbs {
 		fn(cfg)
 	}
+	m.mu.RUnlock()
 }
 
 // loadFile reads the config file from disk.

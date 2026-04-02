@@ -54,7 +54,7 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
   const [testResults, setTestResults] = useState<
     Record<string, { success: boolean; message: string }>
   >({});
-  const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [testingKeys, setTestingKeys] = useState<Set<string>>(new Set());
 
   const updateMutation = useUpdateCoolifyHosts();
   const testMutation = useTestCoolifyHost();
@@ -132,7 +132,11 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
   }
 
   function handleTest(key: string, h: { hostName: string; apiURL: string; apiToken: string }) {
-    setTestingKey(key);
+    setTestingKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
     testMutation.mutate(
       { hostName: h.hostName, apiURL: h.apiURL, apiToken: h.apiToken },
       {
@@ -141,14 +145,22 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
             ...prev,
             [key]: { success: result.success, message: result.message },
           }));
-          setTestingKey(null);
+          setTestingKeys((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
         },
         onError: (err) => {
           setTestResults((prev) => ({
             ...prev,
             [key]: { success: false, message: err.message },
           }));
-          setTestingKey(null);
+          setTestingKeys((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
         },
       },
     );
@@ -224,10 +236,10 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
             <Button
               variant="ghost"
               size="sm"
-              disabled={testingKey === testKey}
+              disabled={testingKeys.has(testKey)}
               onClick={() => handleTest(testKey, h)}
             >
-              {testingKey === testKey ? <Spinner className="size-3" /> : "Test"}
+              {testingKeys.has(testKey) ? <Spinner className="size-3" /> : "Test"}
             </Button>
             {!isEnvRow && fileIndex !== undefined && (
               <>

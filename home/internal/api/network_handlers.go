@@ -14,7 +14,14 @@ func (ar *APIRouter) GetNetworks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	networksMap, hostErrors, err := ar.registry.Docker().ListNetworksAllHosts(ctx)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	networksMap, hostErrors, err := dockerClient.ListNetworksAllHosts(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -37,7 +44,7 @@ func (ar *APIRouter) GetNetworks(w http.ResponseWriter, r *http.Request) {
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"networks":   allNetworks,
-		"hosts":      ar.registry.Docker().GetHosts(),
+		"hosts":      dockerClient.GetHosts(),
 		"hostErrors": hostErrorMessages,
 	})
 }
@@ -52,7 +59,14 @@ func (ar *APIRouter) GetNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	network, err := ar.registry.Docker().GetNetworkDetails(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	network, err := dockerClient.GetNetworkDetails(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

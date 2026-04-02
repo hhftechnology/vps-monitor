@@ -26,6 +26,7 @@ type FileAuthConfig struct {
 	JWTSecret         string `json:"jwtSecret,omitempty"`
 	AdminUsername     string `json:"adminUsername,omitempty"`
 	AdminPasswordHash string `json:"adminPasswordHash,omitempty"`
+	// Deprecated: retained for backward compatibility with legacy SHA-256 password hashes.
 	AdminPasswordSalt string `json:"adminPasswordSalt,omitempty"`
 }
 
@@ -83,8 +84,8 @@ func parseAlertConfig() AlertConfig {
 	config := AlertConfig{
 		Enabled:         os.Getenv("ALERTS_ENABLED") == "true",
 		WebhookURL:      os.Getenv("ALERTS_WEBHOOK_URL"),
-		CPUThreshold:    80,  // Default: 80%
-		MemoryThreshold: 90,  // Default: 90%
+		CPUThreshold:    80, // Default: 80%
+		MemoryThreshold: 90, // Default: 90%
 		CheckInterval:   30 * time.Second,
 	}
 

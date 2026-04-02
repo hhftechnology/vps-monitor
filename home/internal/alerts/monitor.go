@@ -16,11 +16,12 @@ import (
 
 // Monitor handles background monitoring and alerting
 type Monitor struct {
-	docker  *docker.MultiHostClient
-	config  *config.AlertConfig
-	history *AlertHistory
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
+	docker   *docker.MultiHostClient
+	dockerMu sync.RWMutex
+	config   *config.AlertConfig
+	history  *AlertHistory
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
 
 	// Track container states for detecting changes
 	containerStates map[string]string // key: host:containerID, value: state
@@ -36,6 +37,18 @@ func NewMonitor(dockerClient *docker.MultiHostClient, alertConfig *config.AlertC
 		stopCh:          make(chan struct{}),
 		containerStates: make(map[string]string),
 	}
+}
+
+func (m *Monitor) UpdateDockerClient(client *docker.MultiHostClient) {
+	m.dockerMu.Lock()
+	m.docker = client
+	m.dockerMu.Unlock()
+}
+
+func (m *Monitor) getDockerClient() *docker.MultiHostClient {
+	m.dockerMu.RLock()
+	defer m.dockerMu.RUnlock()
+	return m.docker
 }
 
 // Start begins the background monitoring
@@ -95,7 +108,12 @@ func (m *Monitor) checkAll() {
 
 // checkContainerStates checks for container state changes
 func (m *Monitor) checkContainerStates(ctx context.Context) {
-	containersMap, _, err := m.docker.ListContainersAllHosts(ctx)
+	dockerClient := m.getDockerClient()
+	if dockerClient == nil {
+		return
+	}
+
+	containersMap, _, err := dockerClient.ListContainersAllHosts(ctx)
 	if err != nil {
 		log.Printf("Alert monitor: failed to list containers: %v", err)
 		return
@@ -159,7 +177,12 @@ func (m *Monitor) checkContainerStates(ctx context.Context) {
 
 // checkResourceThresholds checks CPU and memory thresholds
 func (m *Monitor) checkResourceThresholds(ctx context.Context) {
-	containersMap, _, err := m.docker.ListContainersAllHosts(ctx)
+	dockerClient := m.getDockerClient()
+	if dockerClient == nil {
+		return
+	}
+
+	containersMap, _, err := dockerClient.ListContainersAllHosts(ctx)
 	if err != nil {
 		return
 	}
@@ -170,7 +193,7 @@ func (m *Monitor) checkResourceThresholds(ctx context.Context) {
 				continue
 			}
 
-			stats, err := m.docker.GetContainerStatsOnce(ctx, hostName, ctr.ID)
+			stats, err := dockerClient.GetContainerStatsOnce(ctx, hostName, ctr.ID)
 			if err != nil {
 				continue
 			}

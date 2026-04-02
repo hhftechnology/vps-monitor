@@ -392,7 +392,12 @@ export function ContainersDashboard() {
       />
 
       {hostErrors.length > 0 && (
-        <div className="rounded-lg border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-900/10 p-3 text-sm">
+        <div
+          className="rounded-lg border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-900/10 p-3 text-sm"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           <p className="font-medium text-yellow-800 dark:text-yellow-200">
             Some Docker hosts are unavailable
           </p>
