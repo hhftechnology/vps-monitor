@@ -20,6 +20,10 @@ import (
 // Pre-compiled regex for validating environment variable keys (performance optimization)
 var envKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+type coolifyEnvSyncer interface {
+	SyncEnvVars(ctx context.Context, resource *coolify.ResourceInfo, envVars map[string]string) error
+}
+
 func (ar *APIRouter) GetSystemStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stats, err := system.GetStats(ctx)
@@ -296,7 +300,6 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 func (ar *APIRouter) streamParsedLogs(w http.ResponseWriter, host, id string, options models.LogOptions) {
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
 	if dockerClient == nil {
-		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -446,19 +449,30 @@ func (ar *APIRouter) UpdateEnvVariables(w http.ResponseWriter, r *http.Request) 
 	if coolifyMulti != nil {
 		coolifyClient := coolifyMulti.GetClient(host)
 		coolifyResource := coolify.ExtractResourceInfo(labels)
-		if coolifyClient != nil && coolifyResource != nil {
-			syncCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-
-			if syncErr := coolifyClient.SyncEnvVars(syncCtx, coolifyResource, envVariables.Env); syncErr != nil {
-				log.Printf("Warning: failed to sync env vars to Coolify for host %s: %v", host, syncErr)
-				response["coolify_synced"] = false
-				response["coolify_error"] = syncErr.Error()
-			} else {
-				response["coolify_synced"] = true
-			}
-		}
+		applyCoolifyEnvSync(r.Context(), host, coolifyClient, coolifyResource, envVariables.Env, response)
 	}
 
 	WriteJsonResponse(w, http.StatusOK, response)
+}
+
+func applyCoolifyEnvSync(ctx context.Context, host string, syncer coolifyEnvSyncer, resource *coolify.ResourceInfo, env map[string]string, response map[string]any) {
+	if syncer == nil || resource == nil {
+		return
+	}
+	if resource.Type == coolify.ResourceTypeDatabase {
+		response["coolify_synced"] = false
+		response["coolify_error"] = "sync not supported for database resources"
+		return
+	}
+
+	syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	if syncErr := syncer.SyncEnvVars(syncCtx, resource, env); syncErr != nil {
+		log.Printf("Warning: failed to sync env vars to Coolify for host %s: %v", host, syncErr)
+		response["coolify_synced"] = false
+		response["coolify_error"] = syncErr.Error()
+		return
+	}
+	response["coolify_synced"] = true
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -31,6 +32,8 @@ const (
 	SourceDefault Source = "default"
 	SourceMixed   Source = "mixed"
 )
+
+var ErrEnvironmentConfigured = errors.New("configured via environment variable")
 
 // EnvSnapshot captures which env vars are set at startup.
 type EnvSnapshot struct {
@@ -161,7 +164,7 @@ func (m *Manager) UpdateDockerHosts(hosts []DockerHost) error {
 		for _, h := range hosts {
 			if envNames[h.Name] {
 				m.mu.Unlock()
-				return fmt.Errorf("host %q is defined via environment variable and cannot be managed from the UI", h.Name)
+				return fmt.Errorf("%w: host %q is defined via environment variable and cannot be managed from the UI", ErrEnvironmentConfigured, h.Name)
 			}
 		}
 	}
@@ -179,6 +182,10 @@ func (m *Manager) UpdateDockerHosts(hosts []DockerHost) error {
 
 // UpdateCoolifyHosts updates the file-defined Coolify hosts.
 func (m *Manager) UpdateCoolifyHosts(hosts []CoolifyHostConfig) error {
+	if err := validateCoolifyHosts(hosts); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 
 	if m.envSnapshot.CoolifySet {
@@ -189,14 +196,9 @@ func (m *Manager) UpdateCoolifyHosts(hosts []CoolifyHostConfig) error {
 		for _, h := range hosts {
 			if envNames[h.HostName] {
 				m.mu.Unlock()
-				return fmt.Errorf("coolify host %q is defined via environment variable and cannot be managed from the UI", h.HostName)
+				return fmt.Errorf("%w: coolify host %q is defined via environment variable and cannot be managed from the UI", ErrEnvironmentConfigured, h.HostName)
 			}
 		}
-	}
-
-	if err := validateCoolifyHosts(hosts); err != nil {
-		m.mu.Unlock()
-		return err
 	}
 
 	oldCoolifyHosts := m.fileConfig.CoolifyHosts
@@ -286,7 +288,7 @@ func (m *Manager) UpdateReadOnly(readOnly bool) error {
 
 	if m.envSnapshot.ReadOnlySet {
 		m.mu.Unlock()
-		return fmt.Errorf("read-only mode is configured via environment variable and cannot be changed from the UI")
+		return fmt.Errorf("%w: read-only mode is configured via environment variable and cannot be changed from the UI", ErrEnvironmentConfigured)
 	}
 
 	oldReadOnly := m.fileConfig.ReadOnly
@@ -306,7 +308,7 @@ func (m *Manager) UpdateAuth(mutate func(current *FileAuthConfig) (*FileAuthConf
 
 	if m.envSnapshot.AuthSet {
 		m.mu.Unlock()
-		return fmt.Errorf("auth is configured via environment variables and cannot be changed from the UI")
+		return fmt.Errorf("%w: auth is configured via environment variables and cannot be changed from the UI", ErrEnvironmentConfigured)
 	}
 
 	oldAuth := m.fileConfig.Auth

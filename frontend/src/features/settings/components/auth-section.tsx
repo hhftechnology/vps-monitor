@@ -56,6 +56,7 @@ export function AuthSection({ config }: AuthSectionProps) {
       {
         onSuccess: (msg) => {
           toast.success(msg);
+          setUsername(trimmedUsername);
           setPassword("");
         },
         onError: (err) => toast.error(err.message),

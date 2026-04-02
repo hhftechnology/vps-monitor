@@ -30,14 +30,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize auth service: %v\nPlease ensure ALL auth environment variables are set: JWT_SECRET, ADMIN_USERNAME, and ADMIN_PASSWORD.", err)
 	}
-	if authService != nil && authService.IsDisabled() {
+	if authService.IsDisabled() {
 		fc := manager.FileConfigSnapshot()
 		if fc.Auth != nil && fc.Auth.Enabled {
 			authService = auth.NewServiceFromFileConfig(fc.Auth)
 		}
 	}
 
-	if authService == nil || authService.IsDisabled() {
+	if authService.IsDisabled() {
 		log.Println("Authentication is DISABLED - no auth environment variables detected")
 		log.Println("   To enable authentication, set: JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD")
 	} else {

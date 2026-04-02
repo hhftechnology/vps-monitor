@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -189,5 +190,19 @@ func HashPassword(password string) (string, error) {
 }
 
 func isBcryptHash(hash string) bool {
-	return len(hash) >= 4 && hash[0] == '$' && hash[1] == '2'
+	if len(hash) != 60 {
+		return false
+	}
+	prefix := hash[:4]
+	if prefix != "$2a$" && prefix != "$2b$" && prefix != "$2y$" {
+		return false
+	}
+	if hash[6] != '$' {
+		return false
+	}
+	cost, err := strconv.Atoi(hash[4:6])
+	if err != nil {
+		return false
+	}
+	return cost >= 4 && cost <= 31
 }

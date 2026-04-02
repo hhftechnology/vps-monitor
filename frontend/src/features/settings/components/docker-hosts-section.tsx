@@ -111,6 +111,7 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
       return;
     }
     const trimmedName = editingHost.name.trim();
+    const trimmedHost = editingHost.host.trim();
     if (envHosts.some((h) => h.name === trimmedName)) {
       toast.error(`Host name "${trimmedName}" is defined via environment variable`);
       return;
@@ -120,7 +121,7 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
       return;
     }
     const next = [...fileHosts];
-    next[editingIndex] = { ...editingHost };
+    next[editingIndex] = { name: trimmedName, host: trimmedHost };
     setFileHosts(next);
     setEditingIndex(null);
     setEditingHost({ name: "", host: "" });

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ type ResourceInfo struct {
 	Type ResourceType
 	UUID string
 }
+
+var safeIdentifierRegex = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type Client struct {
 	baseURL    *url.URL
@@ -227,6 +230,12 @@ func (c *Client) listEnvVars(ctx context.Context, resource *ResourceInfo) ([]coo
 }
 
 func (c *Client) deleteEnvVar(ctx context.Context, resource *ResourceInfo, envUUID string) error {
+	if !safeIdentifierRegex.MatchString(envUUID) {
+		return fmt.Errorf("invalid env UUID format")
+	}
+	if !safeIdentifierRegex.MatchString(resource.UUID) {
+		return fmt.Errorf("invalid resource UUID format")
+	}
 	path := fmt.Sprintf("/api/v1/%ss/%s/envs/%s", resource.Type, resource.UUID, envUUID)
 	_, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	return err
