@@ -13,8 +13,8 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/api/middleware"
 	"github.com/hhftechnology/vps-monitor/internal/auth"
 	"github.com/hhftechnology/vps-monitor/internal/config"
-	"github.com/hhftechnology/vps-monitor/internal/docker"
 	"github.com/hhftechnology/vps-monitor/internal/models"
+	"github.com/hhftechnology/vps-monitor/internal/services"
 	"github.com/hhftechnology/vps-monitor/internal/static"
 )
 
@@ -27,10 +27,8 @@ var jsonBufferPool = sync.Pool{
 
 type APIRouter struct {
 	router        *chi.Mux
-	docker        *docker.MultiHostClient
-	authService   *auth.Service
-	config        *config.Config
-	alertMonitor  *alerts.Monitor
+	registry      *services.Registry
+	manager       *config.Manager
 	alertHandlers *AlertHandlers
 }
 
@@ -39,28 +37,31 @@ type RouterOptions struct {
 	AlertMonitor *alerts.Monitor
 }
 
-func NewRouter(docker *docker.MultiHostClient, authService *auth.Service, config *config.Config, opts *RouterOptions) *chi.Mux {
+func NewRouter(registry *services.Registry, manager *config.Manager, opts *RouterOptions) *chi.Mux {
+	cfg := registry.Config()
+
 	r := &APIRouter{
-		router:      chi.NewRouter(),
-		docker:      docker,
-		authService: authService,
-		config:      config,
+		router:   chi.NewRouter(),
+		registry: registry,
+		manager:  manager,
 	}
 
-	// Set up alert handlers if monitor is provided
+	// Set up alert handlers
 	if opts != nil && opts.AlertMonitor != nil {
-		r.alertMonitor = opts.AlertMonitor
 		r.alertHandlers = NewAlertHandlers(opts.AlertMonitor, &models.AlertConfigResponse{
-			Enabled:         config.Alerts.Enabled,
-			CPUThreshold:    config.Alerts.CPUThreshold,
-			MemoryThreshold: config.Alerts.MemoryThreshold,
-			CheckInterval:   config.Alerts.CheckInterval.String(),
-			WebhookEnabled:  config.Alerts.WebhookURL != "",
+			Enabled:         cfg.Alerts.Enabled,
+			CPUThreshold:    cfg.Alerts.CPUThreshold,
+			MemoryThreshold: cfg.Alerts.MemoryThreshold,
+			CheckInterval:   cfg.Alerts.CheckInterval.String(),
+			WebhookEnabled:  cfg.Alerts.WebhookURL != "",
 		})
 	} else {
-		// Create handlers with nil monitor (alerts disabled)
 		r.alertHandlers = NewAlertHandlers(nil, &models.AlertConfigResponse{
-			Enabled: false,
+			Enabled:         false,
+			CPUThreshold:    cfg.Alerts.CPUThreshold,
+			MemoryThreshold: cfg.Alerts.MemoryThreshold,
+			CheckInterval:   cfg.Alerts.CheckInterval.String(),
+			WebhookEnabled:  cfg.Alerts.WebhookURL != "",
 		})
 	}
 
@@ -94,35 +95,29 @@ func (ar *APIRouter) Routes() *chi.Mux {
 
 	// API routes
 	ar.router.Route("/api/v1", func(r chi.Router) {
-		// System stats - publicly available for now
+		// System stats - publicly available
 		r.Get("/system/stats", ar.GetSystemStats)
 
-		if ar.authService != nil {
-			authHandlers := NewAuthHandlers(ar.authService)
-			r.Post("/auth/login", authHandlers.Login)
+		// Auth login - always registered, dynamic behavior
+		r.Post("/auth/login", ar.handleLogin)
 
-			r.Group(func(protected chi.Router) {
-				protected.Use(auth.Middleware(ar.authService))
+		// Settings endpoints (protected by dynamic auth)
+		ar.registerSettingsRoutes(r)
 
-				protected.Get("/auth/me", authHandlers.GetMe)
-				// protected.Get("/system/stats", ar.GetSystemStats) // Moved to public
-				ar.registerContainerRoutes(protected)
-				ar.registerImageRoutes(protected)
-				ar.registerNetworkRoutes(protected)
-				ar.registerAlertRoutes(protected)
-			})
-			return
-		}
+		// All other routes go through dynamic auth middleware
+		r.Group(func(protected chi.Router) {
+			protected.Use(auth.DynamicMiddleware(ar.registry.Auth))
 
-		// r.Get("/system/stats", ar.GetSystemStats) // Already registered above
-		ar.registerContainerRoutes(r)
-		ar.registerImageRoutes(r)
-		ar.registerNetworkRoutes(r)
-		ar.registerAlertRoutes(r)
+			protected.Get("/auth/me", ar.handleGetMe)
+			protected.Post("/devices/register", ar.RegisterDevice)
+			ar.registerContainerRoutes(protected)
+			ar.registerImageRoutes(protected)
+			ar.registerNetworkRoutes(protected)
+			ar.registerAlertRoutes(protected)
+		})
 	})
 
 	// Serve embedded frontend static files
-	// This handles all non-API routes and serves the React SPA
 	staticFS, err := static.GetFileSystem()
 	if err != nil {
 		log.Printf("Warning: Could not load embedded frontend files: %v", err)
@@ -142,12 +137,14 @@ func (ar *APIRouter) registerContainerRoutes(r chi.Router) {
 		r.Get("/", ar.GetContainer)
 		r.Get("/logs/parsed", ar.GetContainerLogsParsed)
 		r.Get("/env", ar.GetEnvVariables)
-		r.Get("/stats", ar.HandleContainerStats)       // WebSocket for streaming stats
-		r.Get("/stats/once", ar.GetContainerStatsOnce) // Single snapshot
+		r.Get("/stats", ar.HandleContainerStats)
+		r.Get("/stats/once", ar.GetContainerStatsOnce)
 
 		// Mutating routes (blocked in read-only mode)
 		r.Group(func(mutating chi.Router) {
-			mutating.Use(middleware.ReadOnly(ar.config))
+			mutating.Use(middleware.ReadOnly(func() bool {
+				return ar.registry.Config().ReadOnly
+			}))
 			mutating.Post("/start", ar.StartContainer)
 			mutating.Post("/stop", ar.StopContainer)
 			mutating.Post("/restart", ar.RestartContainer)
@@ -165,14 +162,18 @@ func (ar *APIRouter) registerImageRoutes(r chi.Router) {
 
 		// Mutating routes (blocked in read-only mode)
 		r.Group(func(mutating chi.Router) {
-			mutating.Use(middleware.ReadOnly(ar.config))
+			mutating.Use(middleware.ReadOnly(func() bool {
+				return ar.registry.Config().ReadOnly
+			}))
 			mutating.Delete("/", ar.RemoveImage)
 		})
 	})
 
 	// Image pull (mutating)
 	r.Group(func(mutating chi.Router) {
-		mutating.Use(middleware.ReadOnly(ar.config))
+		mutating.Use(middleware.ReadOnly(func() bool {
+			return ar.registry.Config().ReadOnly
+		}))
 		mutating.Post("/images/pull", ar.PullImage)
 	})
 }
@@ -187,4 +188,73 @@ func (ar *APIRouter) registerAlertRoutes(r chi.Router) {
 	r.Get("/alerts/config", ar.alertHandlers.GetAlertConfig)
 	r.Post("/alerts/{id}/acknowledge", ar.alertHandlers.AcknowledgeAlert)
 	r.Post("/alerts/acknowledge-all", ar.alertHandlers.AcknowledgeAllAlerts)
+}
+
+func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
+	r.Route("/settings", func(r chi.Router) {
+		r.Use(auth.DynamicMiddleware(ar.registry.Auth))
+
+		r.Get("/", ar.GetSettings)
+		r.Put("/docker-hosts", ar.UpdateDockerHosts)
+		r.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
+		r.Put("/read-only", ar.UpdateReadOnly)
+		r.Put("/auth", ar.UpdateAuth)
+		r.Post("/test/docker-host", ar.TestDockerHost)
+		r.Post("/test/coolify-host", ar.TestCoolifyHost)
+	})
+}
+
+// handleLogin delegates to the dynamic auth service.
+func (ar *APIRouter) handleLogin(w http.ResponseWriter, r *http.Request) {
+	svc := ar.registry.Auth()
+	if svc == nil || svc.IsDisabled() {
+		http.Error(w, "Authentication is not enabled", http.StatusNotFound)
+		return
+	}
+
+	var loginReq struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if loginReq.Username == "" || loginReq.Password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := svc.ValidateCredentials(loginReq.Username, loginReq.Password); err != nil {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	token, err := svc.GenerateToken(loginReq.Username)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"token": token,
+		"user": map[string]string{
+			"username": loginReq.Username,
+			"role":     "admin",
+		},
+	})
+}
+
+// handleGetMe returns the current authenticated user's information.
+func (ar *APIRouter) handleGetMe(w http.ResponseWriter, r *http.Request) {
+	userValue := r.Context().Value(auth.UserContextKey)
+	if userValue == nil {
+		http.Error(w, "User not found in context", http.StatusUnauthorized)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"user": userValue,
+	})
 }

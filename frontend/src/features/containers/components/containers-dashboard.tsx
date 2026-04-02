@@ -55,6 +55,7 @@ export function ContainersDashboard() {
   const containers = data?.containers ?? [];
   const isReadOnly = data?.readOnly ?? false;
   const hosts = data?.hosts ?? [];
+  const hostErrors = data?.hostErrors ?? [];
 
   const hostInfo = useMemo(
     () => ({
@@ -389,6 +390,26 @@ export function ContainersDashboard() {
         hostInfo={hostInfo}
         systemUsage={systemUsage}
       />
+
+      {hostErrors.length > 0 && (
+        <div
+          className="rounded-lg border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-900/10 p-3 text-sm"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <p className="font-medium text-yellow-800 dark:text-yellow-200">
+            Some Docker hosts are unavailable
+          </p>
+          <ul className="mt-1 text-yellow-700 dark:text-yellow-300">
+            {hostErrors.map((he) => (
+              <li key={he.host}>
+                {he.host}: {he.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <section className="space-y-4">
         <ContainersToolbar

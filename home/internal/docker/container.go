@@ -74,16 +74,19 @@ func (c *MultiHostClient) GetEnvVariables(ctx context.Context, hostName, id stri
 	return envMap, nil
 }
 
-func (c *MultiHostClient) SetEnvVariables(ctx context.Context, hostName, id string, envVariables map[string]string) (string, error) {
+func (c *MultiHostClient) SetEnvVariables(ctx context.Context, hostName, id string, envVariables map[string]string) (string, map[string]string, error) {
 	apiClient, err := c.GetClient(hostName)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	inspect, err := apiClient.ContainerInspect(ctx, id)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+
+	// Store labels before modifying the container (needed for Coolify sync)
+	labels := inspect.Config.Labels
 
 	envMap := make(map[string]string)
 	// First, load all existing env vars from the container config
@@ -114,12 +117,12 @@ func (c *MultiHostClient) SetEnvVariables(ctx context.Context, hostName, id stri
 
 	err = apiClient.ContainerStop(ctx, id, container.StopOptions{})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	err = apiClient.ContainerRemove(ctx, id, container.RemoveOptions{})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	newConfig := inspect.Config
@@ -136,13 +139,13 @@ func (c *MultiHostClient) SetEnvVariables(ctx context.Context, hostName, id stri
 		containerName,
 	)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	err = apiClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	return resp.ID, nil
+	return resp.ID, labels, nil
 }

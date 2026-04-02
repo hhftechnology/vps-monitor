@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -15,14 +14,16 @@ func (ar *APIRouter) GetNetworks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	networksMap, hostErrors, err := ar.docker.ListNetworksAllHosts(ctx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	if len(hostErrors) > 0 {
-		http.Error(w, fmt.Sprintf("Error listing networks on some hosts: %v", hostErrors), http.StatusInternalServerError)
+	networksMap, hostErrors, err := dockerClient.ListNetworksAllHosts(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -32,9 +33,19 @@ func (ar *APIRouter) GetNetworks(w http.ResponseWriter, r *http.Request) {
 		allNetworks = append(allNetworks, networks...)
 	}
 
+	// Build host errors list (graceful partial results)
+	hostErrorMessages := make([]map[string]string, 0, len(hostErrors))
+	for _, he := range hostErrors {
+		hostErrorMessages = append(hostErrorMessages, map[string]string{
+			"host":    he.HostName,
+			"message": he.Err.Error(),
+		})
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"networks": allNetworks,
-		"hosts":    ar.docker.GetHosts(),
+		"networks":   allNetworks,
+		"hosts":      dockerClient.GetHosts(),
+		"hostErrors": hostErrorMessages,
 	})
 }
 
@@ -48,7 +59,14 @@ func (ar *APIRouter) GetNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	network, err := ar.docker.GetNetworkDetails(r.Context(), host, id)
+	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
+	if dockerClient == nil {
+		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	network, err := dockerClient.GetNetworkDetails(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

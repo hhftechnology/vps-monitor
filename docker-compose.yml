@@ -11,7 +11,14 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_PASSWORD_SALT=${ADMIN_PASSWORD_SALT}
       - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
+      - DOCKER_HOSTS=${DOCKER_HOSTS:-}
+      - COOLIFY_CONFIGS=${COOLIFY_CONFIGS:-}
+      - READONLY_MODE=${READONLY_MODE:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /root/.ssh:/root/.ssh:ro
       - /proc:/host/proc:ro
+      - vps-monitor-data:/data
+
+volumes:
+  vps-monitor-data:

@@ -3,15 +3,14 @@ package middleware
 import (
 	"encoding/json"
 	"net/http"
-
-	"github.com/hhftechnology/vps-monitor/internal/config"
 )
 
-// ReadOnly creates a middleware that blocks mutating requests when in read-only mode
-func ReadOnly(cfg *config.Config) func(http.Handler) http.Handler {
+// ReadOnly creates a middleware that blocks mutating requests when in read-only mode.
+// The isReadOnly function is evaluated per request, supporting hot-reload.
+func ReadOnly(isReadOnly func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if cfg.ReadOnly {
+			if isReadOnly() {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
 

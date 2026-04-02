@@ -5,10 +5,17 @@ import type { ContainerInfo, DockerHost } from "../types";
 
 const CONTAINERS_ENDPOINT = `${API_BASE_URL}/api/v1/containers`;
 
+export interface HostError {
+  host: string;
+  message: string;
+}
+
 export interface GetContainersResponse {
   containers: ContainerInfo[];
   readOnly: boolean;
   hosts: DockerHost[];
+  hostErrors: HostError[];
+  coolifyConfigured: boolean;
 }
 
 export async function getContainers(): Promise<GetContainersResponse> {
@@ -28,6 +35,9 @@ export async function getContainers(): Promise<GetContainersResponse> {
   const containers = (data as { containers?: unknown }).containers;
   const readOnly = (data as { readOnly?: boolean }).readOnly ?? false;
   const hosts = (data as { hosts?: unknown }).hosts;
+  const hostErrors = (data as { hostErrors?: unknown }).hostErrors;
+  const coolifyConfigured =
+    (data as { coolifyConfigured?: boolean }).coolifyConfigured ?? false;
 
   if (!Array.isArray(containers)) {
     throw new Error("Unexpected response format");
@@ -41,5 +51,7 @@ export async function getContainers(): Promise<GetContainersResponse> {
     containers: containers as ContainerInfo[],
     readOnly,
     hosts: hosts as DockerHost[],
+    hostErrors: (Array.isArray(hostErrors) ? hostErrors : []) as HostError[],
+    coolifyConfigured,
   };
 }

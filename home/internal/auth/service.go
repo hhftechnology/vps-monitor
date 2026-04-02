@@ -1,13 +1,14 @@
 package auth
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -24,8 +25,8 @@ type Service struct {
 	jwtSecret         []byte
 	adminUsername     string
 	adminPasswordHash string
-	sha256Salt        string
 	tokenExpiration   time.Duration
+	disabled          bool
 }
 
 type Claims struct {
@@ -35,20 +36,19 @@ type Claims struct {
 }
 
 // NewService creates a new auth service
-// Returns nil (no error) if auth environment variables are not set, indicating auth is disabled
+// Returns a disabled service (no error) if auth environment variables are not set.
 func NewService() (*Service, error) {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	adminUsername := os.Getenv("ADMIN_USERNAME")
 	adminPasswordHash := os.Getenv("ADMIN_PASSWORD")
-	sha256Salt := os.Getenv("ADMIN_PASSWORD_SALT")
 
 	// If none of the auth variables are set, return nil to indicate auth is disabled
-	if jwtSecret == "" && adminUsername == "" && (adminPasswordHash == "" && sha256Salt == "") {
-		return nil, nil
+	if jwtSecret == "" && adminUsername == "" && adminPasswordHash == "" {
+		return NewDisabledService(), nil
 	}
 
 	// If some but not all are set, return an error
-	if jwtSecret == "" || adminUsername == "" || (adminPasswordHash == "" && sha256Salt == "") {
+	if jwtSecret == "" || adminUsername == "" || adminPasswordHash == "" {
 		return nil, ErrMissingEnvVars
 	}
 
@@ -56,23 +56,41 @@ func NewService() (*Service, error) {
 		jwtSecret:         []byte(jwtSecret),
 		adminUsername:     adminUsername,
 		adminPasswordHash: adminPasswordHash,
-		sha256Salt:        sha256Salt,
 		tokenExpiration:   7 * 24 * time.Hour, // 7 days
+		disabled:          false,
 	}, nil
+}
+
+func NewDisabledService() *Service {
+	return &Service{disabled: true}
+}
+
+func (s *Service) IsDisabled() bool {
+	return s != nil && s.disabled
+}
+
+func (s *Service) IsUsable() bool {
+	return s != nil && !s.disabled && len(s.jwtSecret) > 0 && s.adminUsername != "" && s.adminPasswordHash != ""
 }
 
 // ValidateCredentials checks if the provided credentials are valid
 func (s *Service) ValidateCredentials(username, password string) error {
+	if !s.IsUsable() {
+		return ErrInvalidCredentials
+	}
+
 	if username != s.adminUsername {
 		return ErrInvalidCredentials
 	}
 
-	hash := sha256.Sum256([]byte(password + s.sha256Salt))
-	if hex.EncodeToString(hash[:]) != s.adminPasswordHash {
-		return ErrInvalidCredentials
+	if isBcryptHash(s.adminPasswordHash) {
+		if err := bcrypt.CompareHashAndPassword([]byte(s.adminPasswordHash), []byte(password)); err != nil {
+			return ErrInvalidCredentials
+		}
+		return nil
 	}
 
-	return nil
+	return ErrInvalidCredentials
 }
 
 // GenerateToken creates a new JWT token for the user
@@ -134,6 +152,33 @@ func GetUserFromClaims(claims *Claims) models.User {
 	}
 }
 
+// NewServiceFromFileConfig creates an auth service from file-based config.
+// Returns a disabled service when the config is nil, disabled, or incomplete.
+func NewServiceFromFileConfig(cfg *config.FileAuthConfig) *Service {
+	if cfg == nil || !cfg.Enabled {
+		return NewDisabledService()
+	}
+	if cfg.JWTSecret == "" || cfg.AdminUsername == "" || cfg.AdminPasswordHash == "" {
+		return NewDisabledService()
+	}
+	return &Service{
+		jwtSecret:         []byte(cfg.JWTSecret),
+		adminUsername:     cfg.AdminUsername,
+		adminPasswordHash: cfg.AdminPasswordHash,
+		tokenExpiration:   7 * 24 * time.Hour,
+		disabled:          false,
+	}
+}
+
+// GenerateRandomHex generates a cryptographically random hex string of the specified byte length.
+func GenerateRandomHex(byteLen int) (string, error) {
+	b := make([]byte, byteLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // HashPassword generates a bcrypt hash from a plain password
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -141,4 +186,8 @@ func HashPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
+}
+
+func isBcryptHash(hash string) bool {
+	return len(hash) >= 4 && hash[0] == '$' && hash[1] == '2'
 }
