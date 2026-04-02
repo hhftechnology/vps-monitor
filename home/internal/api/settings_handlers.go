@@ -342,13 +342,26 @@ func (ar *APIRouter) TestCoolifyHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.APIURL == "" || req.APIToken == "" {
-		http.Error(w, "apiURL and apiToken are required", http.StatusBadRequest)
+	if req.HostName == "" || req.APIToken == "" {
+		http.Error(w, "hostName and apiToken are required", http.StatusBadRequest)
 		return
 	}
 
-	if !isValidCoolifyURL(req.APIURL) {
-		http.Error(w, "invalid API URL (must start with http:// or https://)", http.StatusBadRequest)
+	cfg := ar.registry.Config()
+	var allowedAPIURL string
+	for _, hostCfg := range cfg.CoolifyHosts {
+		if hostCfg.HostName == req.HostName {
+			allowedAPIURL = hostCfg.APIURL
+			break
+		}
+	}
+	if allowedAPIURL == "" {
+		http.Error(w, "unknown hostName; save the host first before testing", http.StatusBadRequest)
+		return
+	}
+
+	if req.APIURL != "" && strings.TrimRight(req.APIURL, "/") != strings.TrimRight(allowedAPIURL, "/") {
+		http.Error(w, "apiURL does not match configured host URL", http.StatusBadRequest)
 		return
 	}
 
@@ -367,7 +380,7 @@ func (ar *APIRouter) TestCoolifyHost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	client, err := coolify.NewSingleClient(strings.TrimRight(req.APIURL, "/"), token)
+	client, err := coolify.NewSingleClient(strings.TrimRight(allowedAPIURL, "/"), token)
 	if err != nil {
 		WriteJsonResponse(w, http.StatusOK, map[string]any{
 			"success": false,
