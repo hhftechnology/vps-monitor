@@ -23,6 +23,8 @@ type HostInfo struct {
 	KernelVersion   string `json:"kernelVersion"`
 	Arch            string `json:"arch"`
 	Uptime          uint64 `json:"uptime"`
+	CPULogical      int    `json:"cpuLogical"`
+	CPUPhysical     int    `json:"cpuPhysical,omitempty"`
 }
 
 type Usage struct {
@@ -71,6 +73,16 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 		cpuPercent = cpuPercents[0]
 	}
 
+	cpuLogical, err := cpu.CountsWithContext(ctx, true)
+	if err != nil {
+		cpuLogical = 0
+	}
+
+	cpuPhysical, err := cpu.CountsWithContext(ctx, false)
+	if err != nil {
+		cpuPhysical = 0
+	}
+
 	// Get Disk Usage for root partition
 	// If running in container with /host mounted, use /host, otherwise use /
 	diskPath := "/"
@@ -95,6 +107,8 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 			KernelVersion:   hInfo.KernelVersion,
 			Arch:            runtime.GOARCH,
 			Uptime:          hInfo.Uptime,
+			CPULogical:      cpuLogical,
+			CPUPhysical:     cpuPhysical,
 		},
 		Usage: Usage{
 			CPUPercent:    cpuPercent,
