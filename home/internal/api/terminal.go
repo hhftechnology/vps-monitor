@@ -104,12 +104,12 @@ func (ar *APIRouter) HandleTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ar *APIRouter) startExecSession(ctx context.Context, host, containerID string) (string, *types.HijackedResponse, error) {
-	execID, err := ar.docker.CreateExec(ctx, host, containerID)
+	execID, err := ar.registry.Docker().CreateExec(ctx, host, containerID)
 	if err != nil {
 		return "", nil, fmt.Errorf("create exec failed: %w", err)
 	}
 
-	resp, err := ar.docker.AttachExec(ctx, host, execID)
+	resp, err := ar.registry.Docker().AttachExec(ctx, host, execID)
 	if err != nil {
 		return "", nil, fmt.Errorf("attach exec failed: %w", err)
 	}
@@ -165,7 +165,7 @@ func (ar *APIRouter) forwardClientInput(
 		if messageType == websocket.TextMessage {
 			var msg ResizeMessage
 			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "resize" {
-				if err := ar.docker.ResizeExec(ctx, host, execID, msg.Rows, msg.Cols); err != nil {
+				if err := ar.registry.Docker().ResizeExec(ctx, host, execID, msg.Rows, msg.Cols); err != nil {
 					log.Printf("failed to resize terminal: %v", err)
 				}
 				continue

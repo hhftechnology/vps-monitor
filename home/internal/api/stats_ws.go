@@ -37,7 +37,7 @@ func (ar *APIRouter) HandleContainerStats(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 
 	// Start streaming stats from Docker
-	statsCh, errCh := ar.docker.StreamContainerStats(ctx, host, id)
+	statsCh, errCh := ar.registry.Docker().StreamContainerStats(ctx, host, id)
 
 	// Handle WebSocket close from client
 	done := make(chan struct{})
@@ -111,7 +111,7 @@ func (ar *APIRouter) GetContainerStatsOnce(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	stats, err := ar.docker.GetContainerStatsOnce(r.Context(), host, id)
+	stats, err := ar.registry.Docker().GetContainerStatsOnce(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

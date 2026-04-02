@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 	"github.com/hhftechnology/vps-monitor/internal/system"
 )
@@ -26,25 +28,21 @@ func (ar *APIRouter) GetSystemStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Override hostname if configured
-	if ar.config.Hostname != "" {
-		stats.HostInfo.Hostname = ar.config.Hostname
+	cfg := ar.registry.Config()
+	if cfg.Hostname != "" {
+		stats.HostInfo.Hostname = cfg.Hostname
 	}
 
 	WriteJsonResponse(w, http.StatusOK, stats)
 }
 
 func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	containersMap, hostErrors, err := ar.docker.ListContainersAllHosts(ctx)
+	containersMap, hostErrors, err := ar.registry.Docker().ListContainersAllHosts(ctx)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if len(hostErrors) > 0 {
-		http.Error(w, fmt.Sprintf("Error listing containers on some hosts: %v", hostErrors), http.StatusInternalServerError)
 		return
 	}
 
@@ -54,10 +52,21 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 		allContainers = append(allContainers, containers...)
 	}
 
+	// Build host errors list for the frontend (graceful partial results)
+	hostErrorMessages := make([]map[string]string, 0, len(hostErrors))
+	for _, he := range hostErrors {
+		hostErrorMessages = append(hostErrorMessages, map[string]string{
+			"host":    he.HostName,
+			"message": he.Err.Error(),
+		})
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"containers": allContainers,
-		"hosts":      ar.docker.GetHosts(),
-		"readOnly":   ar.config.ReadOnly,
+		"containers":        allContainers,
+		"hosts":             ar.registry.Docker().GetHosts(),
+		"readOnly":          ar.registry.Config().ReadOnly,
+		"hostErrors":        hostErrorMessages,
+		"coolifyConfigured": ar.registry.Coolify() != nil,
 	})
 }
 
@@ -70,15 +79,12 @@ func (ar *APIRouter) GetContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inspect, err := ar.docker.GetContainer(r.Context(), host, id)
+	inspect, err := ar.registry.Docker().GetContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Transform InspectResponse into a flat structure matching the frontend ContainerDetailData interface.
-	// The raw InspectResponse has "State" as an object (e.g. {Status:"running", Running:true}),
-	// but the frontend expects "state" as a simple string like the list endpoint returns.
 	name := inspect.Name
 	if len(name) > 0 && name[0] == '/' {
 		name = name[1:]
@@ -130,7 +136,7 @@ func (ar *APIRouter) StartContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.docker.StartContainer(r.Context(), host, id)
+	err := ar.registry.Docker().StartContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -149,7 +155,7 @@ func (ar *APIRouter) StopContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.docker.StopContainer(r.Context(), host, id)
+	err := ar.registry.Docker().StopContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -168,7 +174,7 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.docker.RestartContainer(r.Context(), host, id)
+	err := ar.registry.Docker().RestartContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -187,7 +193,7 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := ar.docker.RemoveContainer(r.Context(), host, id)
+	err := ar.registry.Docker().RemoveContainer(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -206,7 +212,6 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Parse query parameters for log options
 	options := parseLogOptions(r)
 
 	if options.Follow {
@@ -214,7 +219,7 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	logs, err := ar.docker.GetContainerLogsParsed(host, id, options)
+	logs, err := ar.registry.Docker().GetContainerLogsParsed(host, id, options)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -227,7 +232,7 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 }
 
 func (ar *APIRouter) streamParsedLogs(w http.ResponseWriter, host, id string, options models.LogOptions) {
-	stream, err := ar.docker.StreamContainerLogsParsed(host, id, options)
+	stream, err := ar.registry.Docker().StreamContainerLogsParsed(host, id, options)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -308,7 +313,7 @@ func (ar *APIRouter) GetEnvVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	envVariables, err := ar.docker.GetEnvVariables(r.Context(), host, id)
+	envVariables, err := ar.registry.Docker().GetEnvVariables(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -334,7 +339,6 @@ func (ar *APIRouter) UpdateEnvVariables(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Validate environment variable keys (using pre-compiled regex)
 	for key := range envVariables.Env {
 		if !envKeyRegex.MatchString(key) {
 			http.Error(w, fmt.Sprintf("invalid environment variable key: %s", key), http.StatusBadRequest)
@@ -342,14 +346,35 @@ func (ar *APIRouter) UpdateEnvVariables(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	newContainerID, err := ar.docker.SetEnvVariables(r.Context(), host, id, envVariables.Env)
+	newContainerID, labels, err := ar.registry.Docker().SetEnvVariables(r.Context(), host, id, envVariables.Env)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"message":          "Environment variables updated",
 		"new_container_id": newContainerID,
-	})
+	}
+
+	// Best-effort sync to Coolify API
+	coolifyMulti := ar.registry.Coolify()
+	if coolifyMulti != nil {
+		coolifyClient := coolifyMulti.GetClient(host)
+		coolifyResource := coolify.ExtractResourceInfo(labels)
+		if coolifyClient != nil && coolifyResource != nil {
+			syncCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+
+			if syncErr := coolifyClient.SyncEnvVars(syncCtx, coolifyResource, envVariables.Env); syncErr != nil {
+				log.Printf("Warning: failed to sync env vars to Coolify for host %s: %v", host, syncErr)
+				response["coolify_synced"] = false
+				response["coolify_error"] = syncErr.Error()
+			} else {
+				response["coolify_synced"] = true
+			}
+		}
+	}
+
+	WriteJsonResponse(w, http.StatusOK, response)
 }

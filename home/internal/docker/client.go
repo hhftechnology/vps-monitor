@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/cli/cli/connhelper"
 	"github.com/docker/docker/api/types/container"
@@ -38,6 +39,7 @@ func NewMultiHostClient(hosts []config.DockerHost) (*MultiHostClient, error) {
 				Transport: &http.Transport{
 					DialContext: helper.Dialer,
 				},
+				Timeout: 10 * time.Second,
 			}
 
 			apiClient, err = client.NewClientWithOpts(
@@ -155,4 +157,11 @@ func (c *MultiHostClient) GetClient(hostName string) (*client.Client, error) {
 
 func (c *MultiHostClient) GetHosts() []config.DockerHost {
 	return c.hosts
+}
+
+// Close closes all underlying Docker API clients.
+func (c *MultiHostClient) Close() {
+	for _, cl := range c.clients {
+		cl.Close()
+	}
 }

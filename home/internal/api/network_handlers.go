@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -15,14 +14,9 @@ func (ar *APIRouter) GetNetworks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	networksMap, hostErrors, err := ar.docker.ListNetworksAllHosts(ctx)
+	networksMap, hostErrors, err := ar.registry.Docker().ListNetworksAllHosts(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if len(hostErrors) > 0 {
-		http.Error(w, fmt.Sprintf("Error listing networks on some hosts: %v", hostErrors), http.StatusInternalServerError)
 		return
 	}
 
@@ -32,9 +26,19 @@ func (ar *APIRouter) GetNetworks(w http.ResponseWriter, r *http.Request) {
 		allNetworks = append(allNetworks, networks...)
 	}
 
+	// Build host errors list (graceful partial results)
+	hostErrorMessages := make([]map[string]string, 0, len(hostErrors))
+	for _, he := range hostErrors {
+		hostErrorMessages = append(hostErrorMessages, map[string]string{
+			"host":    he.HostName,
+			"message": he.Err.Error(),
+		})
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"networks": allNetworks,
-		"hosts":    ar.docker.GetHosts(),
+		"networks":   allNetworks,
+		"hosts":      ar.registry.Docker().GetHosts(),
+		"hostErrors": hostErrorMessages,
 	})
 }
 
@@ -48,7 +52,7 @@ func (ar *APIRouter) GetNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	network, err := ar.docker.GetNetworkDetails(r.Context(), host, id)
+	network, err := ar.registry.Docker().GetNetworkDetails(r.Context(), host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
