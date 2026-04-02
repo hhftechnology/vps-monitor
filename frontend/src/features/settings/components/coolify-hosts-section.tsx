@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ interface EditingHost {
 }
 
 const EMPTY_HOST: EditingHost = { hostName: "", apiURL: "", apiToken: "" };
+const MASKED_TOKEN = "••••••••";
 
 export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
   const envHosts = config.hosts.filter((h) => h.source === "env");
@@ -63,6 +64,21 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
     () => config.hosts.filter((h) => h.source !== "env").map(({ hostName, apiURL, apiToken }) => ({ hostName, apiURL, apiToken })),
     [config.hosts],
   );
+
+  useEffect(() => {
+    setFileHosts(
+      config.hosts
+        .filter((h) => h.source !== "env")
+        .map(({ hostName, apiURL, apiToken }) => ({ hostName, apiURL, apiToken })),
+    );
+    setEditingIndex(null);
+    setEditingHost(EMPTY_HOST);
+    setIsAdding(false);
+    setNewHost(EMPTY_HOST);
+    setTestResults({});
+    setTestingKeys(new Set());
+  }, [config.hosts]);
+
   const hasChanges = fileHosts.length !== originalFileHosts.length ||
     fileHosts.some((h, i) => h.hostName !== originalFileHosts[i]?.hostName || h.apiURL !== originalFileHosts[i]?.apiURL || h.apiToken !== originalFileHosts[i]?.apiToken);
 
@@ -221,7 +237,7 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
           </div>
         </TableCell>
         <TableCell className="font-mono text-xs text-muted-foreground">{h.apiURL}</TableCell>
-        <TableCell className="text-muted-foreground">{h.apiToken}</TableCell>
+        <TableCell className="text-muted-foreground">{MASKED_TOKEN}</TableCell>
         <TableCell>
           {testResults[testKey] && (
             <span
@@ -233,14 +249,16 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
         </TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={testingKeys.has(testKey)}
-              onClick={() => handleTest(testKey, h)}
-            >
-              {testingKeys.has(testKey) ? <Spinner className="size-3" /> : "Test"}
-            </Button>
+            {!isEnvRow && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={testingKeys.has(testKey)}
+                onClick={() => handleTest(testKey, h)}
+              >
+                {testingKeys.has(testKey) ? <Spinner className="size-3" /> : "Test"}
+              </Button>
+            )}
             {!isEnvRow && fileIndex !== undefined && (
               <>
                 <Button variant="ghost" size="sm" disabled={editingIndex !== null} onClick={() => handleStartEdit(fileIndex)}>Edit</Button>

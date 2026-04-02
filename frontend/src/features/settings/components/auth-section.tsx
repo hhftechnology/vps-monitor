@@ -36,7 +36,9 @@ export function AuthSection({ config }: AuthSectionProps) {
     password.length > 0;
 
   function handleSave() {
-    if (enabled && !username.trim()) {
+    const trimmedUsername = username.trim();
+
+    if (enabled && !trimmedUsername) {
       toast.error("Username is required when enabling auth");
       return;
     }
@@ -48,7 +50,7 @@ export function AuthSection({ config }: AuthSectionProps) {
     mutation.mutate(
       {
         enabled,
-        adminUsername: username,
+        adminUsername: trimmedUsername,
         ...(password ? { newPassword: password } : {}),
       },
       {

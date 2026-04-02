@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -29,20 +30,31 @@ type ResourceInfo struct {
 }
 
 type Client struct {
-	apiURL     string
+	baseURL    *url.URL
+	allowedIPs map[string]struct{}
 	apiToken   string
 	httpClient *http.Client
 }
 
 func newClient(apiURL, apiToken string) (*Client, error) {
-	if err := validateAPIURL(apiURL); err != nil {
+	parsedBaseURL, allowedIPs, err := validateAPIURL(apiURL)
+	if err != nil {
+		return nil, err
+	}
+
+	transport, err := newPinnedTransport(parsedBaseURL, allowedIPs)
+	if err != nil {
 		return nil, err
 	}
 
 	return &Client{
-		apiURL:     apiURL,
+		baseURL:    parsedBaseURL,
+		allowedIPs: allowedIPs,
 		apiToken:   apiToken,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+		},
 	}, nil
 }
 
@@ -88,8 +100,7 @@ func (c *Client) TestConnection(ctx context.Context) error {
 	if c == nil {
 		return fmt.Errorf("coolify client is nil")
 	}
-	url := fmt.Sprintf("%s/api/v1/version", c.apiURL)
-	_, err := c.doRequest(ctx, "GET", url, nil)
+	_, err := c.doRequest(ctx, http.MethodGet, "/api/v1/version", nil)
 	if err != nil {
 		return fmt.Errorf("coolify API unreachable: %w", err)
 	}
@@ -157,13 +168,15 @@ func (c *Client) SyncEnvVars(ctx context.Context, resource *ResourceInfo, envVar
 		return fmt.Errorf("coolify: failed to fetch existing env vars: %w", err)
 	}
 
-	// 2. Delete env vars that no longer exist
-	var deletionErrors []string
+	// 2. Compute stale env vars to delete after successful upsert
+	type staleEnvVar struct {
+		key  string
+		uuid string
+	}
+	toDelete := make([]staleEnvVar, 0, len(existing))
 	for _, ev := range existing {
 		if _, exists := envVars[ev.Key]; !exists {
-			if delErr := c.deleteEnvVar(ctx, resource, ev.UUID); delErr != nil {
-				deletionErrors = append(deletionErrors, fmt.Sprintf("%s (%s): %v", ev.Key, ev.UUID, delErr))
-			}
+			toDelete = append(toDelete, staleEnvVar{key: ev.Key, uuid: ev.UUID})
 		}
 	}
 
@@ -178,9 +191,17 @@ func (c *Client) SyncEnvVars(ctx context.Context, resource *ResourceInfo, envVar
 		return fmt.Errorf("coolify: failed to marshal env vars: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/%ss/%s/envs/bulk", c.apiURL, resource.Type, resource.UUID)
-	if _, err := c.doRequest(ctx, http.MethodPatch, url, body); err != nil {
+	path := fmt.Sprintf("/api/v1/%ss/%s/envs/bulk", resource.Type, resource.UUID)
+	if _, err := c.doRequest(ctx, http.MethodPatch, path, body); err != nil {
 		return fmt.Errorf("coolify: bulk update failed: %w", err)
+	}
+
+	// 4. Delete env vars that no longer exist
+	var deletionErrors []string
+	for _, stale := range toDelete {
+		if delErr := c.deleteEnvVar(ctx, resource, stale.uuid); delErr != nil {
+			deletionErrors = append(deletionErrors, fmt.Sprintf("%s (%s): %v", stale.key, stale.uuid, delErr))
+		}
 	}
 
 	if len(deletionErrors) > 0 {
@@ -191,9 +212,9 @@ func (c *Client) SyncEnvVars(ctx context.Context, resource *ResourceInfo, envVar
 }
 
 func (c *Client) listEnvVars(ctx context.Context, resource *ResourceInfo) ([]coolifyEnvVar, error) {
-	url := fmt.Sprintf("%s/api/v1/%ss/%s/envs", c.apiURL, resource.Type, resource.UUID)
+	path := fmt.Sprintf("/api/v1/%ss/%s/envs", resource.Type, resource.UUID)
 
-	respBody, err := c.doRequest(ctx, http.MethodGet, url, nil)
+	respBody, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -206,18 +227,24 @@ func (c *Client) listEnvVars(ctx context.Context, resource *ResourceInfo) ([]coo
 }
 
 func (c *Client) deleteEnvVar(ctx context.Context, resource *ResourceInfo, envUUID string) error {
-	url := fmt.Sprintf("%s/api/v1/%ss/%s/envs/%s", c.apiURL, resource.Type, resource.UUID, envUUID)
-	_, err := c.doRequest(ctx, http.MethodDelete, url, nil)
+	path := fmt.Sprintf("/api/v1/%ss/%s/envs/%s", resource.Type, resource.UUID, envUUID)
+	_, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	return err
 }
 
-func (c *Client) doRequest(ctx context.Context, method, url string, body []byte) ([]byte, error) {
+func (c *Client) doRequest(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	requestURL, err := c.resolveRequestURL(path)
+	if err != nil {
+		return nil, err
+	}
+
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	// #nosec G107 -- requestURL is built from a validated base URL and constrained API path.
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -251,24 +278,40 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body []byte)
 	return respBody, nil
 }
 
-func validateAPIURL(raw string) error {
+func (c *Client) resolveRequestURL(path string) (string, error) {
+	if c == nil || c.baseURL == nil {
+		return "", fmt.Errorf("coolify client base URL is not configured")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("invalid Coolify API path")
+	}
+
+	baseCopy := *c.baseURL
+	requestURL := baseCopy.ResolveReference(&url.URL{Path: path})
+	return requestURL.String(), nil
+}
+
+func validateAPIURL(raw string) (*url.URL, map[string]struct{}, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid API URL: %w", err)
+		return nil, nil, fmt.Errorf("invalid API URL: %w", err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("invalid API URL scheme: %s", parsed.Scheme)
+	allowInsecureHTTP := os.Getenv("COOLIFY_ALLOW_INSECURE_HTTP") == "true"
+	if parsed.Scheme != "https" && !(allowInsecureHTTP && parsed.Scheme == "http") {
+		return nil, nil, fmt.Errorf("invalid API URL scheme: only https is allowed by default (set COOLIFY_ALLOW_INSECURE_HTTP=true to allow http)")
 	}
 	hostname := parsed.Hostname()
 	if hostname == "" {
-		return fmt.Errorf("invalid API URL host")
+		return nil, nil, fmt.Errorf("invalid API URL host")
 	}
 
+	allowedIPs := make(map[string]struct{})
 	if ip := net.ParseIP(hostname); ip != nil {
 		if isPrivateOrLocalIP(ip) {
-			return fmt.Errorf("API URL host is not allowed")
+			return nil, nil, fmt.Errorf("API URL host is not allowed")
 		}
-		return nil
+		allowedIPs[ip.String()] = struct{}{}
+		return parsed, allowedIPs, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -276,18 +319,19 @@ func validateAPIURL(raw string) error {
 
 	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
 	if err != nil {
-		return fmt.Errorf("failed to resolve API URL host: %w", err)
+		return nil, nil, fmt.Errorf("failed to resolve API URL host: %w", err)
 	}
 	if len(resolved) == 0 {
-		return fmt.Errorf("failed to resolve API URL host")
+		return nil, nil, fmt.Errorf("failed to resolve API URL host")
 	}
 	for _, addr := range resolved {
 		if isPrivateOrLocalIP(addr.IP) {
-			return fmt.Errorf("API URL host resolves to a private/local address")
+			return nil, nil, fmt.Errorf("API URL host resolves to a private/local address")
 		}
+		allowedIPs[addr.IP.String()] = struct{}{}
 	}
 
-	return nil
+	return parsed, allowedIPs, nil
 }
 
 func isPrivateOrLocalIP(ip net.IP) bool {
@@ -298,4 +342,42 @@ func isPrivateOrLocalIP(ip net.IP) bool {
 		return true
 	}
 	return ip.IsPrivate()
+}
+
+func newPinnedTransport(baseURL *url.URL, allowedIPs map[string]struct{}) (*http.Transport, error) {
+	if baseURL == nil {
+		return nil, fmt.Errorf("base URL is required")
+	}
+	port := baseURL.Port()
+	if port == "" {
+		if baseURL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	hostname := baseURL.Hostname()
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			resolved, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve Coolify host %q: %w", hostname, err)
+			}
+
+			for _, addr := range resolved {
+				ip := addr.IP.String()
+				if _, ok := allowedIPs[ip]; !ok {
+					continue
+				}
+				if isPrivateOrLocalIP(addr.IP) {
+					continue
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
+			}
+
+			return nil, fmt.Errorf("no allowed IP available for Coolify host %q", hostname)
+		},
+	}, nil
 }

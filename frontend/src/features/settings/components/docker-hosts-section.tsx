@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -61,6 +61,21 @@ export function DockerHostsSection({ config }: DockerHostsSectionProps) {
     () => config.hosts.filter((h) => h.source !== "env").map(({ name, host }) => ({ name, host })),
     [config.hosts],
   );
+
+  useEffect(() => {
+    setFileHosts(
+      config.hosts
+        .filter((h) => h.source !== "env")
+        .map(({ name, host }) => ({ name, host })),
+    );
+    setEditingIndex(null);
+    setEditingHost({ name: "", host: "" });
+    setIsAdding(false);
+    setNewHost({ name: "", host: "" });
+    setTestResults({});
+    setTestingKeys(new Set());
+  }, [config.hosts]);
+
   const hasChanges = fileHosts.length !== originalFileHosts.length ||
     fileHosts.some((h, i) => h.name !== originalFileHosts[i]?.name || h.host !== originalFileHosts[i]?.host);
 

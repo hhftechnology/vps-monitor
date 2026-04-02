@@ -29,9 +29,6 @@ export function SettingsPage() {
 
   if (!data) return null;
 
-  const dockerHostsKey = `${data.dockerHosts.source}-${data.dockerHosts.hosts.length}`;
-  const coolifyHostsKey = `${data.coolifyHosts.source}-${data.coolifyHosts.hosts.length}`;
-
   return (
     <div className="container mx-auto max-w-3xl px-4 py-8 space-y-6">
       <div>
@@ -42,10 +39,10 @@ export function SettingsPage() {
           restarting.
         </p>
       </div>
-      <DockerHostsSection key={dockerHostsKey} config={data.dockerHosts} />
-      <CoolifyHostsSection key={coolifyHostsKey} config={data.coolifyHosts} />
+      <DockerHostsSection config={data.dockerHosts} />
+      <CoolifyHostsSection config={data.coolifyHosts} />
       <ReadOnlySection config={data.readOnly} />
-      <AuthSection key={`${data.auth.enabled}-${data.auth.adminUsername}`} config={data.auth} />
+      <AuthSection config={data.auth} />
     </div>
   );
 }

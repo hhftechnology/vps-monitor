@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -103,9 +104,9 @@ func (ar *APIRouter) GetContainer(w http.ResponseWriter, r *http.Request) {
 		name = name[1:]
 	}
 
-	var command string
+	command := ""
 	if inspect.Config != nil && len(inspect.Config.Cmd) > 0 {
-		command = fmt.Sprintf("%v", inspect.Config.Cmd)
+		command = strings.Join(inspect.Config.Cmd, " ")
 	}
 
 	var image string
@@ -125,17 +126,30 @@ func (ar *APIRouter) GetContainer(w http.ResponseWriter, r *http.Request) {
 		status = inspect.State.Status
 	}
 
+	names := make([]string, 0, 1)
+	if name != "" {
+		names = append(names, name)
+	}
+
+	createdAt := int64(0)
+	if inspect.Created != "" {
+		if parsedCreated, parseErr := time.Parse(time.RFC3339Nano, inspect.Created); parseErr == nil {
+			createdAt = parsedCreated.Unix()
+		}
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"container": map[string]any{
-			"id":      inspect.ID,
-			"names":   []string{name},
-			"image":   image,
-			"state":   state,
-			"status":  status,
-			"host":    host,
-			"created": inspect.Created,
-			"command": command,
-			"labels":  labels,
+			"id":       inspect.ID,
+			"names":    names,
+			"image":    image,
+			"image_id": inspect.Image,
+			"state":    state,
+			"status":   status,
+			"host":     host,
+			"created":  createdAt,
+			"command":  command,
+			"labels":   labels,
 		},
 	})
 }

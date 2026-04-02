@@ -2,7 +2,6 @@ package auth
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -26,7 +25,6 @@ type Service struct {
 	jwtSecret         []byte
 	adminUsername     string
 	adminPasswordHash string
-	sha256Salt        string
 	tokenExpiration   time.Duration
 	disabled          bool
 }
@@ -43,15 +41,14 @@ func NewService() (*Service, error) {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	adminUsername := os.Getenv("ADMIN_USERNAME")
 	adminPasswordHash := os.Getenv("ADMIN_PASSWORD")
-	sha256Salt := os.Getenv("ADMIN_PASSWORD_SALT")
 
 	// If none of the auth variables are set, return nil to indicate auth is disabled
-	if jwtSecret == "" && adminUsername == "" && (adminPasswordHash == "" && sha256Salt == "") {
+	if jwtSecret == "" && adminUsername == "" && adminPasswordHash == "" {
 		return NewDisabledService(), nil
 	}
 
 	// If some but not all are set, return an error
-	if jwtSecret == "" || adminUsername == "" || (adminPasswordHash == "" && sha256Salt == "") {
+	if jwtSecret == "" || adminUsername == "" || adminPasswordHash == "" {
 		return nil, ErrMissingEnvVars
 	}
 
@@ -59,7 +56,6 @@ func NewService() (*Service, error) {
 		jwtSecret:         []byte(jwtSecret),
 		adminUsername:     adminUsername,
 		adminPasswordHash: adminPasswordHash,
-		sha256Salt:        sha256Salt,
 		tokenExpiration:   7 * 24 * time.Hour, // 7 days
 		disabled:          false,
 	}, nil
@@ -91,15 +87,6 @@ func (s *Service) ValidateCredentials(username, password string) error {
 		if err := bcrypt.CompareHashAndPassword([]byte(s.adminPasswordHash), []byte(password)); err != nil {
 			return ErrInvalidCredentials
 		}
-		return nil
-	}
-
-	if s.sha256Salt == "" {
-		return ErrInvalidCredentials
-	}
-
-	hash := sha256.Sum256([]byte(password + s.sha256Salt))
-	if hex.EncodeToString(hash[:]) == s.adminPasswordHash {
 		return nil
 	}
 
@@ -166,28 +153,21 @@ func GetUserFromClaims(claims *Claims) models.User {
 }
 
 // NewServiceFromFileConfig creates an auth service from file-based config.
-// Returns nil if the config is nil, disabled, or incomplete.
+// Returns a disabled service when the config is nil, disabled, or incomplete.
 func NewServiceFromFileConfig(cfg *config.FileAuthConfig) *Service {
 	if cfg == nil || !cfg.Enabled {
 		return NewDisabledService()
 	}
 	if cfg.JWTSecret == "" || cfg.AdminUsername == "" || cfg.AdminPasswordHash == "" {
-		return nil
+		return NewDisabledService()
 	}
 	return &Service{
 		jwtSecret:         []byte(cfg.JWTSecret),
 		adminUsername:     cfg.AdminUsername,
 		adminPasswordHash: cfg.AdminPasswordHash,
-		sha256Salt:        cfg.AdminPasswordSalt,
 		tokenExpiration:   7 * 24 * time.Hour,
 		disabled:          false,
 	}
-}
-
-// HashPasswordSHA256 computes SHA256(password + salt) and returns the hex-encoded hash.
-func HashPasswordSHA256(password, salt string) string {
-	h := sha256.Sum256([]byte(password + salt))
-	return hex.EncodeToString(h[:])
 }
 
 // GenerateRandomHex generates a cryptographically random hex string of the specified byte length.

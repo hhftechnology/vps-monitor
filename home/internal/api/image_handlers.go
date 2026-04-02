@@ -145,12 +145,11 @@ func (ar *APIRouter) PullImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
 	if dockerClient == nil {
-		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	defer releaseDocker()
 
 	reader, err := dockerClient.PullImage(r.Context(), host, imageName)
 	if err != nil {

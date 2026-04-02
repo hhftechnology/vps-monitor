@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -12,14 +13,57 @@ import (
 )
 
 func TestValidateAPIURLRejectsPrivateIP(t *testing.T) {
-	if err := validateAPIURL("http://127.0.0.1"); err == nil {
+	if _, _, err := validateAPIURL("https://127.0.0.1"); err == nil {
 		t.Fatalf("expected private loopback URL to be rejected")
 	}
 }
 
 func TestValidateAPIURLAllowsPublicIP(t *testing.T) {
-	if err := validateAPIURL("https://8.8.8.8"); err != nil {
+	if _, _, err := validateAPIURL("https://8.8.8.8"); err != nil {
 		t.Fatalf("expected public IP URL to be allowed, got %v", err)
+	}
+}
+
+func TestValidateAPIURLRejectsPrivateRanges(t *testing.T) {
+	for _, raw := range []string{
+		"https://10.0.0.1",
+		"https://192.168.1.1",
+		"https://172.16.0.1",
+	} {
+		if _, _, err := validateAPIURL(raw); err == nil {
+			t.Fatalf("expected private range URL %q to be rejected", raw)
+		}
+	}
+}
+
+func TestValidateAPIURLRejectsIPv6Loopback(t *testing.T) {
+	if _, _, err := validateAPIURL("https://[::1]"); err == nil {
+		t.Fatalf("expected IPv6 loopback URL to be rejected")
+	}
+}
+
+func TestValidateAPIURLRejectsInvalidURLs(t *testing.T) {
+	for _, raw := range []string{
+		"http:////",
+		"://nohost",
+	} {
+		if _, _, err := validateAPIURL(raw); err == nil {
+			t.Fatalf("expected malformed URL %q to be rejected", raw)
+		}
+	}
+}
+
+func TestValidateAPIURLRejectsHTTPWithoutOptIn(t *testing.T) {
+	t.Setenv("COOLIFY_ALLOW_INSECURE_HTTP", "")
+	if _, _, err := validateAPIURL("http://8.8.8.8"); err == nil {
+		t.Fatalf("expected http URL to be rejected without opt-in")
+	}
+}
+
+func TestValidateAPIURLAllowsHTTPWithOptIn(t *testing.T) {
+	t.Setenv("COOLIFY_ALLOW_INSECURE_HTTP", "true")
+	if _, _, err := validateAPIURL("http://8.8.8.8"); err != nil {
+		t.Fatalf("expected http URL to be allowed with opt-in, got %v", err)
 	}
 }
 
@@ -52,7 +96,8 @@ func TestSyncEnvVarsReturnsDeletionErrors(t *testing.T) {
 	})
 
 	client := &Client{
-		apiURL:     "https://example.com",
+		baseURL:    mustParseURL(t, "https://example.com"),
+		allowedIPs: map[string]struct{}{"127.0.0.1": {}},
 		apiToken:   "token",
 		httpClient: &http.Client{Transport: transport},
 	}
@@ -84,4 +129,13 @@ func response(status int, body string) *http.Response {
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("failed to parse URL %q: %v", raw, err)
+	}
+	return parsed
 }

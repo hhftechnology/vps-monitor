@@ -28,19 +28,16 @@ func TestValidateCredentialsSupportsBcrypt(t *testing.T) {
 	}
 }
 
-func TestValidateCredentialsSupportsLegacySHA256(t *testing.T) {
-	salt := "legacy-salt"
-	hash := HashPasswordSHA256("legacy-pass", salt)
+func TestValidateCredentialsRejectsNonBcryptHashes(t *testing.T) {
 	svc := &Service{
 		jwtSecret:         []byte("jwt-secret"),
 		adminUsername:     "admin",
-		adminPasswordHash: hash,
-		sha256Salt:        salt,
+		adminPasswordHash: "legacy-not-bcrypt-hash",
 		tokenExpiration:   time.Hour,
 	}
 
-	if err := svc.ValidateCredentials("admin", "legacy-pass"); err != nil {
-		t.Fatalf("expected legacy credentials to validate, got %v", err)
+	if err := svc.ValidateCredentials("admin", "legacy-pass"); err == nil {
+		t.Fatalf("expected non-bcrypt password hash to be rejected")
 	}
 }
 
@@ -108,5 +105,20 @@ func TestDynamicMiddlewareUsesLastKnownGoodService(t *testing.T) {
 	handler.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected fallback request to pass, got %d", rec2.Code)
+	}
+}
+
+func TestDynamicMiddlewareNoLastGoodServiceReturnsServiceUnavailable(t *testing.T) {
+	handler := DynamicMiddleware(func() *Service { return nil })(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected %d, got %d", http.StatusServiceUnavailable, rec.Code)
 	}
 }

@@ -57,7 +57,7 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 		})
 	} else {
 		r.alertHandlers = NewAlertHandlers(nil, &models.AlertConfigResponse{
-			Enabled:         cfg.Alerts.Enabled,
+			Enabled:         false,
 			CPUThreshold:    cfg.Alerts.CPUThreshold,
 			MemoryThreshold: cfg.Alerts.MemoryThreshold,
 			CheckInterval:   cfg.Alerts.CheckInterval.String(),

@@ -24,6 +24,26 @@ func TestSwapDockerWaitsForActiveLease(t *testing.T) {
 		close(done)
 	}()
 
+	observed := make(chan struct{})
+	go func() {
+		for {
+			client, releaseObserved := registry.AcquireDocker()
+			if client == newClient {
+				releaseObserved()
+				close(observed)
+				return
+			}
+			releaseObserved()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case <-observed:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("did not observe new client acquisition after swap")
+	}
+
 	select {
 	case <-done:
 		t.Fatalf("SwapDocker returned before lease was released")

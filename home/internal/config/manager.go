@@ -1,12 +1,17 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 // FileConfig represents the JSON config file structure.
@@ -189,6 +194,11 @@ func (m *Manager) UpdateCoolifyHosts(hosts []CoolifyHostConfig) error {
 		}
 	}
 
+	if err := validateCoolifyHosts(hosts); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+
 	oldCoolifyHosts := m.fileConfig.CoolifyHosts
 	m.fileConfig.CoolifyHosts = hosts
 	if err := m.persist(); err != nil {
@@ -198,6 +208,76 @@ func (m *Manager) UpdateCoolifyHosts(hosts []CoolifyHostConfig) error {
 	}
 	m.remerge()
 	return nil
+}
+
+func validateCoolifyHosts(hosts []CoolifyHostConfig) error {
+	seen := make(map[string]struct{}, len(hosts))
+	for _, h := range hosts {
+		hostName := strings.TrimSpace(h.HostName)
+		if hostName == "" {
+			return fmt.Errorf("coolify host name cannot be empty")
+		}
+		if _, exists := seen[hostName]; exists {
+			return fmt.Errorf("duplicate coolify host name: %q", hostName)
+		}
+		seen[hostName] = struct{}{}
+		if err := validateCoolifyAPIURL(h.APIURL); err != nil {
+			return fmt.Errorf("invalid API URL for host %q: %w", hostName, err)
+		}
+	}
+	return nil
+}
+
+func validateCoolifyAPIURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid API URL: %w", err)
+	}
+
+	allowInsecureHTTP := os.Getenv("COOLIFY_ALLOW_INSECURE_HTTP") == "true"
+	if parsed.Scheme != "https" && !(allowInsecureHTTP && parsed.Scheme == "http") {
+		return fmt.Errorf("invalid API URL scheme: only https is allowed by default (set COOLIFY_ALLOW_INSECURE_HTTP=true to allow http)")
+	}
+
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("invalid API URL host")
+	}
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		if isPrivateOrLocalIP(ip) {
+			return fmt.Errorf("API URL host is not allowed")
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve API URL host: %w", err)
+	}
+	if len(resolved) == 0 {
+		return fmt.Errorf("failed to resolve API URL host")
+	}
+	for _, addr := range resolved {
+		if isPrivateOrLocalIP(addr.IP) {
+			return fmt.Errorf("API URL host resolves to a private/local address")
+		}
+	}
+
+	return nil
+}
+
+func isPrivateOrLocalIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return true
+	}
+	return ip.IsPrivate()
 }
 
 // UpdateReadOnly updates the read-only setting in the file config.
