@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -240,7 +241,7 @@ func (ar *APIRouter) UpdateAuth(w http.ResponseWriter, r *http.Request) {
 			if authCfg.JWTSecret == "" {
 				secret, err := auth.GenerateRandomHex(32)
 				if err != nil {
-					return nil, fmt.Errorf("failed to generate JWT secret")
+					return nil, fmt.Errorf("failed to generate JWT secret: %w", err)
 				}
 				authCfg.JWTSecret = secret
 			}
@@ -407,7 +408,7 @@ func (ar *APIRouter) TestCoolifyHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func settingsErrorStatus(err error) int {
-	if strings.Contains(err.Error(), "environment variable") {
+	if errors.Is(err, config.ErrEnvironmentConfigured) {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError
