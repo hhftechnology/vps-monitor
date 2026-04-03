@@ -70,7 +70,6 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 	// Note: 0 interval returns immediate value since last call, which might be 0 on first call
 	// For a dashboard, we usually want the average over the last second, but that blocks.
 	// A better approach for an API is to return the value since last call or just immediate.
-	// Let's use a very short interval for responsiveness, or 0.
 	cpuPercents, err := cpu.PercentWithContext(ctx, 0, false)
 	if err != nil {
 		return nil, err
@@ -84,8 +83,8 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 	cachedCPUMutex.Lock()
 	if cachedCPULogical == 0 {
 		logical, err := cpu.CountsWithContext(ctx, true)
-		physical, _ := cpu.CountsWithContext(ctx, false)
-		if err == nil && logical > 0 {
+		physical, errPhys := cpu.CountsWithContext(ctx, false)
+		if err == nil && errPhys == nil && logical > 0 {
 			cachedCPULogical = logical
 			cachedCPUPhysical = physical
 		}

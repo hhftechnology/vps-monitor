@@ -72,7 +72,7 @@ export function ScanResultsExport({ result }: ScanResultsExportProps) {
       `| CVE ID | Severity | Package | Installed | Fixed In |`,
       `|--------|----------|---------|-----------|----------|`,
       ...result.vulnerabilities.map((v) => {
-        const ep = (s: string) => s.replace(/\|/g, "\\|");
+        const ep = (s: string) => s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
         return `| ${ep(v.id)} | ${ep(v.severity)} | ${ep(v.package)} | ${ep(v.installed_version)} | ${ep(v.fixed_version || "-")} |`;
       }),
     ];
