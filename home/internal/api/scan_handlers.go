@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hhftechnology/vps-monitor/internal/config"
@@ -42,6 +43,11 @@ func (h *ScanHandlers) StartScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Scanner != "" && req.Scanner != "grype" && req.Scanner != "trivy" {
+		http.Error(w, "unsupported scanner, must be 'grype' or 'trivy'", http.StatusBadRequest)
+		return
+	}
+
 	job, err := h.scanner.StartScan(req.ImageRef, req.Host, req.Scanner)
 	if err != nil {
 		log.Printf("Failed to start scan: %v", err)
@@ -62,6 +68,11 @@ func (h *ScanHandlers) StartBulkScan(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Scanner != "" && req.Scanner != "grype" && req.Scanner != "trivy" {
+		http.Error(w, "unsupported scanner, must be 'grype' or 'trivy'", http.StatusBadRequest)
 		return
 	}
 
@@ -225,6 +236,10 @@ func (h *ScanHandlers) GetSBOMJob(w http.ResponseWriter, r *http.Request) {
 
 	// If complete and download requested, serve the file
 	if job.Status == models.ScanJobComplete && r.URL.Query().Get("download") == "true" && job.FilePath != "" {
+		if _, err := os.Stat(job.FilePath); err != nil {
+			http.Error(w, "SBOM file no longer available", http.StatusGone)
+			return
+		}
 		w.Header().Set("Content-Disposition", "attachment; filename=sbom-"+id+".json")
 		w.Header().Set("Content-Type", "application/json")
 		http.ServeFile(w, r, job.FilePath)
@@ -266,6 +281,17 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	validScanners := map[string]bool{"grype": true, "trivy": true, "syft": true}
+	if req.DefaultScanner != "" && !validScanners[req.DefaultScanner] {
+		http.Error(w, "invalid defaultScanner", http.StatusBadRequest)
+		return
+	}
+	validSeverities := map[string]bool{"Critical": true, "High": true, "Medium": true, "Low": true, "Negligible": true, "Unknown": true}
+	if req.Notifications.MinSeverity != "" && !validSeverities[req.Notifications.MinSeverity] {
+		http.Error(w, "invalid minSeverity", http.StatusBadRequest)
+		return
+	}
+
 	// Persist to file config
 	fileCfg := &config.FileScannerConfig{
 		GrypeImage:     req.GrypeImage,
@@ -283,28 +309,6 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 		},
 	}
 
-	// Update the running scanner service first to prevent diversion on crash
-	scannerCfg := &models.ScannerConfig{
-		GrypeImage:     req.GrypeImage,
-		TrivyImage:     req.TrivyImage,
-		SyftImage:      req.SyftImage,
-		DefaultScanner: models.ScannerType(req.DefaultScanner),
-		GrypeArgs:      req.GrypeArgs,
-		TrivyArgs:      req.TrivyArgs,
-		Notifications: models.NotificationConfig{
-			DiscordWebhookURL: req.Notifications.DiscordWebhookURL,
-			SlackWebhookURL:   req.Notifications.SlackWebhookURL,
-			MinSeverity:       models.SeverityLevel(req.Notifications.MinSeverity),
-		},
-	}
-	if req.Notifications.OnScanComplete != nil {
-		scannerCfg.Notifications.OnScanComplete = *req.Notifications.OnScanComplete
-	}
-	if req.Notifications.OnBulkComplete != nil {
-		scannerCfg.Notifications.OnBulkComplete = *req.Notifications.OnBulkComplete
-	}
-	h.scanner.UpdateConfig(scannerCfg)
-
 	if err := h.manager.UpdateScannerConfig(fileCfg); err != nil {
 		log.Printf("Failed to persist scanner config: %v", err)
 		http.Error(w, "failed to update scanner config", http.StatusInternalServerError)
@@ -313,7 +317,7 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"message": "Scanner configuration updated",
-		"config":  scannerCfg,
+		"config":  fileCfg,
 	})
 }
 

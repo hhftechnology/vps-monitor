@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/google/shlex"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 )
 
@@ -115,9 +116,12 @@ func RunGrypeScan(ctx context.Context, dockerClient *client.Client, scannerImage
 // buildGrypeCmd constructs the command for Grype.
 func buildGrypeCmd(imageRef, args string) []string {
 	if args != "" {
-		// Replace {image} placeholder with actual image ref
 		resolved := strings.ReplaceAll(args, "{image}", imageRef)
-		return strings.Fields(resolved)
+		parts, err := shlex.Split(resolved)
+		if err != nil {
+			return strings.Fields(resolved)
+		}
+		return parts
 	}
 	return []string{imageRef, "-o", "json"}
 }

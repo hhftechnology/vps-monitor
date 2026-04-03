@@ -39,8 +39,7 @@ type Usage struct {
 }
 
 var (
-	cpuCountsOnce     sync.Once
-	cachedCPUMutex    sync.RWMutex
+	cachedCPUMutex    sync.Mutex
 	cachedCPULogical  int
 	cachedCPUPhysical int
 )
@@ -54,15 +53,6 @@ func Init() {
 	}
 }
 
-func loadCPUCounts(ctx context.Context) {
-	logical, _ := cpu.CountsWithContext(ctx, true)
-	physical, _ := cpu.CountsWithContext(ctx, false)
-
-	cachedCPUMutex.Lock()
-	cachedCPULogical = logical
-	cachedCPUPhysical = physical
-	cachedCPUMutex.Unlock()
-}
 
 func GetStats(ctx context.Context) (*SystemStats, error) {
 	hInfo, err := host.InfoWithContext(ctx)
@@ -91,14 +81,18 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 		cpuPercent = cpuPercents[0]
 	}
 
-	cpuCountsOnce.Do(func() {
-		loadCPUCounts(ctx)
-	})
-
-	cachedCPUMutex.RLock()
+	cachedCPUMutex.Lock()
+	if cachedCPULogical == 0 {
+		logical, err := cpu.CountsWithContext(ctx, true)
+		physical, _ := cpu.CountsWithContext(ctx, false)
+		if err == nil && logical > 0 {
+			cachedCPULogical = logical
+			cachedCPUPhysical = physical
+		}
+	}
 	cpuLog := cachedCPULogical
 	cpuPhys := cachedCPUPhysical
-	cachedCPUMutex.RUnlock()
+	cachedCPUMutex.Unlock()
 
 	// Get Disk Usage for root partition
 	// If running in container with /host mounted, use /host, otherwise use /

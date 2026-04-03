@@ -66,6 +66,7 @@ const (
 	ScanJobComplete  ScanJobStatus = "complete"
 	ScanJobFailed    ScanJobStatus = "failed"
 	ScanJobCancelled ScanJobStatus = "cancelled"
+	ScanJobExpired   ScanJobStatus = "expired"
 )
 
 // ScanJob represents an individual scan job

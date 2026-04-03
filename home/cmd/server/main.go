@@ -84,21 +84,7 @@ func main() {
 	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
 
 	// Scanner service
-	scannerCfg := &models.ScannerConfig{
-		GrypeImage:     cfg.Scanner.GrypeImage,
-		TrivyImage:     cfg.Scanner.TrivyImage,
-		SyftImage:      cfg.Scanner.SyftImage,
-		DefaultScanner: models.ScannerType(cfg.Scanner.DefaultScanner),
-		GrypeArgs:      cfg.Scanner.GrypeArgs,
-		TrivyArgs:      cfg.Scanner.TrivyArgs,
-		Notifications: models.NotificationConfig{
-			DiscordWebhookURL: cfg.Scanner.DiscordWebhookURL,
-			SlackWebhookURL:   cfg.Scanner.SlackWebhookURL,
-			OnScanComplete:    cfg.Scanner.NotifyOnComplete,
-			OnBulkComplete:    cfg.Scanner.NotifyOnBulk,
-			MinSeverity:       models.SeverityLevel(cfg.Scanner.NotifyMinSeverity),
-		},
-	}
+	scannerCfg := buildScannerConfig(cfg.Scanner)
 	scannerService := scanner.NewScannerService(registry, scannerCfg)
 	log.Printf("Vulnerability scanner ready (default: %s)", cfg.Scanner.DefaultScanner)
 
@@ -132,22 +118,7 @@ func main() {
 		}
 
 		// Update scanner configuration
-		newScannerCfg := &models.ScannerConfig{
-			GrypeImage:     newCfg.Scanner.GrypeImage,
-			TrivyImage:     newCfg.Scanner.TrivyImage,
-			SyftImage:      newCfg.Scanner.SyftImage,
-			DefaultScanner: models.ScannerType(newCfg.Scanner.DefaultScanner),
-			GrypeArgs:      newCfg.Scanner.GrypeArgs,
-			TrivyArgs:      newCfg.Scanner.TrivyArgs,
-			Notifications: models.NotificationConfig{
-				DiscordWebhookURL: newCfg.Scanner.DiscordWebhookURL,
-				SlackWebhookURL:   newCfg.Scanner.SlackWebhookURL,
-				OnScanComplete:    newCfg.Scanner.NotifyOnComplete,
-				OnBulkComplete:    newCfg.Scanner.NotifyOnBulk,
-				MinSeverity:       models.SeverityLevel(newCfg.Scanner.NotifyMinSeverity),
-			},
-		}
-		scannerService.UpdateConfig(newScannerCfg)
+		scannerService.UpdateConfig(buildScannerConfig(newCfg.Scanner))
 
 		log.Println("Configuration reloaded successfully")
 	})
@@ -161,5 +132,23 @@ func main() {
 	log.Println("Server starting on :6789")
 	if err := http.ListenAndServe(":6789", apiRouter); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
+	}
+}
+
+func buildScannerConfig(sc config.ScannerConfig) *models.ScannerConfig {
+	return &models.ScannerConfig{
+		GrypeImage:     sc.GrypeImage,
+		TrivyImage:     sc.TrivyImage,
+		SyftImage:      sc.SyftImage,
+		DefaultScanner: models.ScannerType(sc.DefaultScanner),
+		GrypeArgs:      sc.GrypeArgs,
+		TrivyArgs:      sc.TrivyArgs,
+		Notifications: models.NotificationConfig{
+			DiscordWebhookURL: sc.DiscordWebhookURL,
+			SlackWebhookURL:   sc.SlackWebhookURL,
+			OnScanComplete:    sc.NotifyOnComplete,
+			OnBulkComplete:    sc.NotifyOnBulk,
+			MinSeverity:       models.SeverityLevel(sc.NotifyMinSeverity),
+		},
 	}
 }

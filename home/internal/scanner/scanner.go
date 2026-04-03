@@ -148,6 +148,9 @@ func (s *ScannerService) StartBulkScan(scannerType models.ScannerType, hosts []s
 	bulkJob.TotalImages = len(bulkJob.Jobs)
 	if bulkJob.TotalImages == 0 {
 		bulkJob.Status = models.ScanJobComplete
+		s.mu.Lock()
+		s.bulkJobs[bulkJob.ID] = &bulkScanState{job: bulkJob}
+		s.mu.Unlock()
 		return bulkJob, nil
 	}
 
@@ -208,11 +211,28 @@ func (s *ScannerService) GetBulkJobs() []*models.BulkScanJob {
 func (s *ScannerService) CancelJob(id string) bool {
 	s.mu.Lock()
 	cancel, ok := s.cancels[id]
+	if ok {
+		// Only cancel if the job is still in an active (non-terminal) state
+		if job, exists := s.jobs[id]; exists {
+			switch job.Status {
+			case models.ScanJobPending, models.ScanJobPulling, models.ScanJobScanning:
+				// active — allow cancel
+			default:
+				ok = false
+			}
+		} else if state, exists := s.bulkJobs[id]; exists {
+			switch state.job.Status {
+			case models.ScanJobPending, models.ScanJobPulling, models.ScanJobScanning:
+				// active — allow cancel
+			default:
+				ok = false
+			}
+		}
+	}
 	s.mu.Unlock()
 
 	if ok {
 		cancel()
-		// Update job status
 		s.mu.Lock()
 		if job, exists := s.jobs[id]; exists {
 			job.Status = models.ScanJobCancelled
@@ -220,6 +240,7 @@ func (s *ScannerService) CancelJob(id string) bool {
 		if state, exists := s.bulkJobs[id]; exists {
 			state.job.Status = models.ScanJobCancelled
 		}
+		delete(s.cancels, id)
 		s.mu.Unlock()
 		return true
 	}
@@ -235,6 +256,11 @@ func (s *ScannerService) GetSBOMJob(id string) *models.SBOMJob {
 
 func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cancel context.CancelFunc) {
 	defer cancel()
+	defer func() {
+		s.mu.Lock()
+		delete(s.cancels, job.ID)
+		s.mu.Unlock()
+	}()
 
 	cfg := s.Config()
 
@@ -311,6 +337,11 @@ func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cance
 
 func (s *ScannerService) runBulkScan(ctx context.Context, bulkJob *models.BulkScanJob, cancel context.CancelFunc) {
 	defer cancel()
+	defer func() {
+		s.mu.Lock()
+		delete(s.cancels, bulkJob.ID)
+		s.mu.Unlock()
+	}()
 
 	s.mu.Lock()
 	bulkJob.Status = models.ScanJobScanning
@@ -419,9 +450,11 @@ func (s *ScannerService) sendBulkNotification(bulkJob *models.BulkScanJob) {
 			if meetsMinSeverity(job.Result.Summary, cfg.Notifications.MinSeverity) {
 				filteredJob.Jobs = append(filteredJob.Jobs, job)
 			}
-		} else {
-			filteredJob.Jobs = append(filteredJob.Jobs, job)
 		}
+	}
+
+	if len(filteredJob.Jobs) == 0 {
+		return
 	}
 
 	if cfg.Notifications.DiscordWebhookURL != "" {

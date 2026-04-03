@@ -21,7 +21,12 @@ type Notifier struct {
 // NewNotifier creates a new notifier.
 func NewNotifier() *Notifier {
 	return &Notifier{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -271,7 +276,10 @@ func discordColor(summary models.SeveritySummary) int {
 	if summary.Low > 0 {
 		return 0xFEE75C // Yellow
 	}
-	return 0x57F287 // Green - no vulnerabilities
+	if summary.Negligible > 0 || summary.Unknown > 0 {
+		return 0xFEE75C // Yellow - non-zero but low/unknown findings
+	}
+	return 0x57F287 // Green - truly no vulnerabilities
 }
 
 func validateWebhookURL(raw string) error {

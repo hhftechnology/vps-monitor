@@ -145,6 +145,10 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 	// Schedule cleanup after 1 hour
 	time.AfterFunc(1*time.Hour, func() {
 		os.Remove(filePath)
+		s.mu.Lock()
+		job.FilePath = ""
+		job.Status = models.ScanJobExpired
+		s.mu.Unlock()
 	})
 }
 

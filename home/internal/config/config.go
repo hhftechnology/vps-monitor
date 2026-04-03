@@ -174,7 +174,7 @@ func parseScannerConfig() ScannerConfig {
 	cfg := ScannerConfig{
 		GrypeImage:        "anchore/grype:v0.110.0",
 		TrivyImage:        "aquasec/trivy:0.69.3",
-		SyftImage:         "anchore/syft:v1.27.1",
+		SyftImage:         "anchore/syft:v1.42.3",
 		DefaultScanner:    "grype",
 		GrypeArgs:         "",
 		TrivyArgs:         "",
