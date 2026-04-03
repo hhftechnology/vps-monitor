@@ -146,15 +146,31 @@ export function ScanResultsTable({ vulnerabilities }: ScanResultsTableProps) {
               filtered.map((vuln, index) => (
                 <TableRow key={`${vuln.id}-${vuln.package}-${index}`}>
                   <TableCell>
-                    <a
-                      href={`https://nvd.nist.gov/vuln/detail/${vuln.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-sm hover:underline"
-                    >
-                      {vuln.id}
-                      <ExternalLinkIcon className="size-3" />
-                    </a>
+                    {vuln.id.startsWith("CVE-") ? (
+                      <a
+                        href={`https://nvd.nist.gov/vuln/detail/${vuln.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-sm hover:underline"
+                      >
+                        {vuln.id}
+                        <ExternalLinkIcon className="size-3" />
+                      </a>
+                    ) : vuln.id.startsWith("GHSA-") ? (
+                      <a
+                        href={`https://github.com/advisories/${vuln.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-sm hover:underline"
+                      >
+                        {vuln.id}
+                        <ExternalLinkIcon className="size-3" />
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center text-sm">
+                        {vuln.id}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge className={severityColors[vuln.severity]}>

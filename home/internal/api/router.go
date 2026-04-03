@@ -209,8 +209,8 @@ func (ar *APIRouter) registerScanRoutes(r chi.Router) {
 	// Read-only routes
 	r.Get("/scan/jobs", ar.scanHandlers.GetScanJobs)
 	r.Get("/scan/jobs/{id}", ar.scanHandlers.GetScanJob)
-	r.Get("/scan/results/{imageRef}", ar.scanHandlers.GetScanResults)
-	r.Get("/scan/results/{imageRef}/latest", ar.scanHandlers.GetLatestScanResult)
+	r.Get("/scan/results", ar.scanHandlers.GetScanResults)
+	r.Get("/scan/results/latest", ar.scanHandlers.GetLatestScanResult)
 	r.Get("/scan/sbom/{id}", ar.scanHandlers.GetSBOMJob)
 
 	// Mutating routes (blocked in read-only mode)
@@ -238,8 +238,13 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
 		if ar.scanHandlers != nil {
 			r.Get("/scan", ar.scanHandlers.GetScannerConfig)
-			r.Put("/scan", ar.scanHandlers.UpdateScannerConfig)
-			r.Post("/scan/test-notification", ar.scanHandlers.TestScanNotification)
+			r.Group(func(mutating chi.Router) {
+				mutating.Use(middleware.ReadOnly(func() bool {
+					return ar.registry.Config().ReadOnly
+				}))
+				mutating.Put("/scan", ar.scanHandlers.UpdateScannerConfig)
+				mutating.Post("/scan/test-notification", ar.scanHandlers.TestScanNotification)
+			})
 		}
 	})
 }

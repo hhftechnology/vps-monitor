@@ -195,7 +195,7 @@ func demuxDockerLogs(reader io.Reader) ([]byte, error) {
 			if err == io.EOF {
 				break
 			}
-			return result, nil
+			return result, err
 		}
 
 		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
@@ -206,7 +206,7 @@ func demuxDockerLogs(reader io.Reader) ([]byte, error) {
 		frame := make([]byte, size)
 		_, err = io.ReadFull(reader, frame)
 		if err != nil {
-			return result, nil
+			return result, err
 		}
 
 		// Only capture stdout (stream type 1)

@@ -24,8 +24,8 @@ type HostInfo struct {
 	KernelVersion   string `json:"kernelVersion"`
 	Arch            string `json:"arch"`
 	Uptime          uint64 `json:"uptime"`
-	CPULogical      *int   `json:"cpuLogical"`
-	CPUPhysical     *int   `json:"cpuPhysical"`
+	CPULogical      int    `json:"cpuLogical"`
+	CPUPhysical     int    `json:"cpuPhysical,omitempty"`
 }
 
 type Usage struct {
@@ -40,8 +40,9 @@ type Usage struct {
 
 var (
 	cpuCountsOnce     sync.Once
-	cachedCPULogical  *int
-	cachedCPUPhysical *int
+	cachedCPUMutex    sync.RWMutex
+	cachedCPULogical  int
+	cachedCPUPhysical int
 )
 
 // Init configures gopsutil to use the host's /proc directory if mounted
@@ -54,17 +55,13 @@ func Init() {
 }
 
 func loadCPUCounts(ctx context.Context) {
-	if cpuLogical, err := cpu.CountsWithContext(ctx, true); err == nil {
-		cachedCPULogical = intPtr(cpuLogical)
-	}
+	logical, _ := cpu.CountsWithContext(ctx, true)
+	physical, _ := cpu.CountsWithContext(ctx, false)
 
-	if cpuPhysical, err := cpu.CountsWithContext(ctx, false); err == nil {
-		cachedCPUPhysical = intPtr(cpuPhysical)
-	}
-}
-
-func intPtr(v int) *int {
-	return &v
+	cachedCPUMutex.Lock()
+	cachedCPULogical = logical
+	cachedCPUPhysical = physical
+	cachedCPUMutex.Unlock()
 }
 
 func GetStats(ctx context.Context) (*SystemStats, error) {
@@ -98,6 +95,11 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 		loadCPUCounts(ctx)
 	})
 
+	cachedCPUMutex.RLock()
+	cpuLog := cachedCPULogical
+	cpuPhys := cachedCPUPhysical
+	cachedCPUMutex.RUnlock()
+
 	// Get Disk Usage for root partition
 	// If running in container with /host mounted, use /host, otherwise use /
 	diskPath := "/"
@@ -122,8 +124,8 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 			KernelVersion:   hInfo.KernelVersion,
 			Arch:            runtime.GOARCH,
 			Uptime:          hInfo.Uptime,
-			CPULogical:      cachedCPULogical,
-			CPUPhysical:     cachedCPUPhysical,
+			CPULogical:      cpuLog,
+			CPUPhysical:     cpuPhys,
 		},
 		Usage: Usage{
 			CPUPercent:    cpuPercent,

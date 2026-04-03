@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/google/shlex"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 )
 
@@ -47,7 +48,10 @@ func RunTrivyScan(ctx context.Context, dockerClient *client.Client, scannerImage
 	pullReader.Close()
 
 	// Build the command
-	cmd := buildTrivyCmd(imageRef, args)
+	cmd, err := buildTrivyCmd(imageRef, args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse trivy args: %w", err)
+	}
 
 	if onProgress != nil {
 		onProgress("Scanning " + imageRef + " with Trivy...")
@@ -102,12 +106,12 @@ func RunTrivyScan(ctx context.Context, dockerClient *client.Client, scannerImage
 }
 
 // buildTrivyCmd constructs the command for Trivy.
-func buildTrivyCmd(imageRef, args string) []string {
+func buildTrivyCmd(imageRef, args string) ([]string, error) {
 	if args != "" {
 		resolved := strings.ReplaceAll(args, "{image}", imageRef)
-		return strings.Fields(resolved)
+		return shlex.Split(resolved)
 	}
-	return []string{"image", "--format", "json", imageRef}
+	return []string{"image", "--format", "json", imageRef}, nil
 }
 
 // parseTrivyOutput parses Trivy JSON output into vulnerabilities.

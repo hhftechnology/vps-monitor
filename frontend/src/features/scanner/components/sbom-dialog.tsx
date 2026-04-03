@@ -101,9 +101,9 @@ export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogP
         {!started ? (
           <div className="space-y-4">
             <div className="space-y-1">
-              <label className="text-sm font-medium">Format</label>
+              <label htmlFor="sbom-format" className="text-sm font-medium">Format</label>
               <Select value={format} onValueChange={(value) => setFormat(value as SBOMFormat)}>
-                <SelectTrigger>
+                <SelectTrigger id="sbom-format">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

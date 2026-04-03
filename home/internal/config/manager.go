@@ -62,6 +62,7 @@ type EnvSnapshot struct {
 	CoolifySet     bool
 	ReadOnlySet    bool
 	AuthSet        bool
+	ScannerSet     bool
 }
 
 // Manager handles loading, merging, and persisting configuration.
@@ -99,6 +100,17 @@ func NewManager() *Manager {
 		AuthSet: os.Getenv("JWT_SECRET") != "" ||
 			os.Getenv("ADMIN_USERNAME") != "" ||
 			os.Getenv("ADMIN_PASSWORD") != "",
+		ScannerSet: os.Getenv("SCANNER_GRYPE_IMAGE") != "" ||
+			os.Getenv("SCANNER_TRIVY_IMAGE") != "" ||
+			os.Getenv("SCANNER_SYFT_IMAGE") != "" ||
+			os.Getenv("SCANNER_DEFAULT") != "" ||
+			os.Getenv("SCANNER_GRYPE_ARGS") != "" ||
+			os.Getenv("SCANNER_TRIVY_ARGS") != "" ||
+			os.Getenv("SCANNER_DISCORD_WEBHOOK_URL") != "" ||
+			os.Getenv("SCANNER_SLACK_WEBHOOK_URL") != "" ||
+			os.Getenv("SCANNER_NOTIFY_ON_COMPLETE") != "" ||
+			os.Getenv("SCANNER_NOTIFY_ON_BULK") != "" ||
+			os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY") != "",
 	}
 
 	// Load env-based config using existing parsers.
@@ -356,6 +368,11 @@ func (m *Manager) UpdateAuth(mutate func(current *FileAuthConfig) (*FileAuthConf
 // UpdateScannerConfig updates the scanner configuration in the file config.
 func (m *Manager) UpdateScannerConfig(scanner *FileScannerConfig) error {
 	m.mu.Lock()
+
+	if m.envSnapshot.ScannerSet {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: scanner is configured via environment variables and cannot be changed from the UI", ErrEnvironmentConfigured)
+	}
 
 	oldScanner := m.fileConfig.Scanner
 	m.fileConfig.Scanner = scanner

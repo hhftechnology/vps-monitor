@@ -131,6 +131,24 @@ func main() {
 			registry.SwapAuth(auth.NewServiceFromFileConfig(fc.Auth))
 		}
 
+		// Update scanner configuration
+		newScannerCfg := &models.ScannerConfig{
+			GrypeImage:     newCfg.Scanner.GrypeImage,
+			TrivyImage:     newCfg.Scanner.TrivyImage,
+			SyftImage:      newCfg.Scanner.SyftImage,
+			DefaultScanner: models.ScannerType(newCfg.Scanner.DefaultScanner),
+			GrypeArgs:      newCfg.Scanner.GrypeArgs,
+			TrivyArgs:      newCfg.Scanner.TrivyArgs,
+			Notifications: models.NotificationConfig{
+				DiscordWebhookURL: newCfg.Scanner.DiscordWebhookURL,
+				SlackWebhookURL:   newCfg.Scanner.SlackWebhookURL,
+				OnScanComplete:    newCfg.Scanner.NotifyOnComplete,
+				OnBulkComplete:    newCfg.Scanner.NotifyOnBulk,
+				MinSeverity:       models.SeverityLevel(newCfg.Scanner.NotifyMinSeverity),
+			},
+		}
+		scannerService.UpdateConfig(newScannerCfg)
+
 		log.Println("Configuration reloaded successfully")
 	})
 

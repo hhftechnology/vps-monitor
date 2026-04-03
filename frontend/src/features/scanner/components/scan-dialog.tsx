@@ -91,9 +91,9 @@ export function ScanDialog({ isOpen, onOpenChange, imageRef, host }: ScanDialogP
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <div className="space-y-1">
-                <label className="text-sm font-medium">Scanner</label>
+                <label htmlFor="scanner-select" className="text-sm font-medium">Scanner</label>
                 <Select value={scanner} onValueChange={(v) => setScanner(v as ScannerType)}>
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger id="scanner-select" className="w-40">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

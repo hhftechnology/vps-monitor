@@ -125,9 +125,9 @@ func (s *ScannerService) StartBulkScan(scannerType models.ScannerType, hosts []s
 			continue
 		}
 		for _, img := range images {
-			imageRef := img.RepoTags[0]
-			if len(img.RepoTags) == 0 {
-				imageRef = img.ID
+			imageRef := img.ID
+			if len(img.RepoTags) > 0 {
+				imageRef = img.RepoTags[0]
 			}
 			job := &models.ScanJob{
 				ID:        uuid.New().String(),
@@ -404,13 +404,33 @@ func (s *ScannerService) sendNotification(result *models.ScanResult) {
 
 func (s *ScannerService) sendBulkNotification(bulkJob *models.BulkScanJob) {
 	cfg := s.Config()
+
+	filteredJob := &models.BulkScanJob{
+		ID:          bulkJob.ID,
+		TotalImages: bulkJob.TotalImages,
+		Completed:   bulkJob.Completed,
+		Failed:      bulkJob.Failed,
+		Status:      bulkJob.Status,
+		CreatedAt:   bulkJob.CreatedAt,
+	}
+
+	for _, job := range bulkJob.Jobs {
+		if job.Result != nil {
+			if meetsMinSeverity(job.Result.Summary, cfg.Notifications.MinSeverity) {
+				filteredJob.Jobs = append(filteredJob.Jobs, job)
+			}
+		} else {
+			filteredJob.Jobs = append(filteredJob.Jobs, job)
+		}
+	}
+
 	if cfg.Notifications.DiscordWebhookURL != "" {
-		if err := s.notifier.SendDiscord(cfg.Notifications.DiscordWebhookURL, nil, bulkJob); err != nil {
+		if err := s.notifier.SendDiscord(cfg.Notifications.DiscordWebhookURL, nil, filteredJob); err != nil {
 			log.Printf("Failed to send Discord bulk notification: %v", err)
 		}
 	}
 	if cfg.Notifications.SlackWebhookURL != "" {
-		if err := s.notifier.SendSlack(cfg.Notifications.SlackWebhookURL, nil, bulkJob); err != nil {
+		if err := s.notifier.SendSlack(cfg.Notifications.SlackWebhookURL, nil, filteredJob); err != nil {
 			log.Printf("Failed to send Slack bulk notification: %v", err)
 		}
 	}

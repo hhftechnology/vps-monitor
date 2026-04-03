@@ -2,9 +2,12 @@ package scanner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/models"
@@ -224,13 +227,17 @@ func (n *Notifier) buildSlackBulkPayload(bulkJob *models.BulkScanJob) map[string
 	}
 }
 
-func (n *Notifier) sendWebhook(url string, payload map[string]interface{}) error {
+func (n *Notifier) sendWebhook(webhookURL string, payload map[string]interface{}) error {
+	if err := validateWebhookURL(webhookURL); err != nil {
+		return err
+	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal webhook payload: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to create webhook request: %w", err)
 	}
@@ -265,4 +272,54 @@ func discordColor(summary models.SeveritySummary) int {
 		return 0xFEE75C // Yellow
 	}
 	return 0x57F287 // Green - no vulnerabilities
+}
+
+func validateWebhookURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
+	}
+
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("webhook scheme must be http or https")
+	}
+
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("invalid webhook URL host")
+	}
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		if isPrivateOrLocalIP(ip) {
+			return fmt.Errorf("webhook URL host is not allowed")
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve webhook host: %w", err)
+	}
+	if len(resolved) == 0 {
+		return fmt.Errorf("failed to resolve webhook host")
+	}
+	for _, addr := range resolved {
+		if isPrivateOrLocalIP(addr.IP) {
+			return fmt.Errorf("webhook host resolves to a private/local address")
+		}
+	}
+
+	return nil
+}
+
+func isPrivateOrLocalIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return true
+	}
+	return ip.IsPrivate()
 }

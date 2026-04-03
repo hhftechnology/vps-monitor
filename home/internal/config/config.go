@@ -213,6 +213,14 @@ func parseScannerConfig() ScannerConfig {
 		cfg.NotifyMinSeverity = v
 	}
 
+	if cfg.DefaultScanner != "grype" && cfg.DefaultScanner != "trivy" {
+		cfg.DefaultScanner = "grype"
+	}
+	if cfg.NotifyMinSeverity != "Low" && cfg.NotifyMinSeverity != "Medium" &&
+		cfg.NotifyMinSeverity != "High" && cfg.NotifyMinSeverity != "Critical" {
+		cfg.NotifyMinSeverity = "High"
+	}
+
 	return cfg
 }
 

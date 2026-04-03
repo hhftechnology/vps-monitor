@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import isEqual from "fast-deep-equal";
 
 import {
   useScannerConfig,
@@ -40,7 +41,7 @@ const severityOptions: SeverityLevel[] = [
 ];
 
 function configsMatch(a: ScannerConfig | null, b: ScannerConfig | null) {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return isEqual(a, b);
 }
 
 export function ScannerSection({ disabled = false }: ScannerSectionProps) {

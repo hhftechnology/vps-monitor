@@ -2,8 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
-	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hhftechnology/vps-monitor/internal/config"
@@ -44,7 +44,8 @@ func (h *ScanHandlers) StartScan(w http.ResponseWriter, r *http.Request) {
 
 	job, err := h.scanner.StartScan(req.ImageRef, req.Host, req.Scanner)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Failed to start scan: %v", err)
+		http.Error(w, "failed to start scan", http.StatusInternalServerError)
 		return
 	}
 
@@ -66,7 +67,8 @@ func (h *ScanHandlers) StartBulkScan(w http.ResponseWriter, r *http.Request) {
 
 	bulkJob, err := h.scanner.StartBulkScan(req.Scanner, req.Hosts)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Failed to start bulk scan: %v", err)
+		http.Error(w, "failed to start bulk scan", http.StatusInternalServerError)
 		return
 	}
 
@@ -131,11 +133,11 @@ func (h *ScanHandlers) CancelScanJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetScanResults handles GET /api/v1/scan/results/{imageRef}
+// GetScanResults handles GET /api/v1/scan/results
 func (h *ScanHandlers) GetScanResults(w http.ResponseWriter, r *http.Request) {
-	imageRef, err := url.PathUnescape(chi.URLParam(r, "imageRef"))
-	if err != nil {
-		http.Error(w, "invalid imageRef", http.StatusBadRequest)
+	imageRef := r.URL.Query().Get("image")
+	if imageRef == "" {
+		http.Error(w, "image query parameter is required", http.StatusBadRequest)
 		return
 	}
 	host := r.URL.Query().Get("host")
@@ -150,11 +152,11 @@ func (h *ScanHandlers) GetScanResults(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetLatestScanResult handles GET /api/v1/scan/results/{imageRef}/latest
+// GetLatestScanResult handles GET /api/v1/scan/results/latest
 func (h *ScanHandlers) GetLatestScanResult(w http.ResponseWriter, r *http.Request) {
-	imageRef, err := url.PathUnescape(chi.URLParam(r, "imageRef"))
-	if err != nil {
-		http.Error(w, "invalid imageRef", http.StatusBadRequest)
+	imageRef := r.URL.Query().Get("image")
+	if imageRef == "" {
+		http.Error(w, "image query parameter is required", http.StatusBadRequest)
 		return
 	}
 	host := r.URL.Query().Get("host")
@@ -197,7 +199,8 @@ func (h *ScanHandlers) StartSBOMGeneration(w http.ResponseWriter, r *http.Reques
 
 	job, err := h.scanner.StartSBOMGeneration(req.ImageRef, req.Host, req.Format)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Failed to start SBOM generation: %v", err)
+		http.Error(w, "failed to start SBOM generation", http.StatusInternalServerError)
 		return
 	}
 
@@ -280,15 +283,33 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 		},
 	}
 
+	// Update the running scanner service first to prevent diversion on crash
+	scannerCfg := &models.ScannerConfig{
+		GrypeImage:     req.GrypeImage,
+		TrivyImage:     req.TrivyImage,
+		SyftImage:      req.SyftImage,
+		DefaultScanner: models.ScannerType(req.DefaultScanner),
+		GrypeArgs:      req.GrypeArgs,
+		TrivyArgs:      req.TrivyArgs,
+		Notifications: models.NotificationConfig{
+			DiscordWebhookURL: req.Notifications.DiscordWebhookURL,
+			SlackWebhookURL:   req.Notifications.SlackWebhookURL,
+			MinSeverity:       models.SeverityLevel(req.Notifications.MinSeverity),
+		},
+	}
+	if req.Notifications.OnScanComplete != nil {
+		scannerCfg.Notifications.OnScanComplete = *req.Notifications.OnScanComplete
+	}
+	if req.Notifications.OnBulkComplete != nil {
+		scannerCfg.Notifications.OnBulkComplete = *req.Notifications.OnBulkComplete
+	}
+	h.scanner.UpdateConfig(scannerCfg)
+
 	if err := h.manager.UpdateScannerConfig(fileCfg); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Failed to persist scanner config: %v", err)
+		http.Error(w, "failed to update scanner config", http.StatusInternalServerError)
 		return
 	}
-
-	// Update the scanner service config
-	mergedCfg := h.manager.Config()
-	scannerCfg := configToScannerConfig(&mergedCfg.Scanner)
-	h.scanner.UpdateConfig(scannerCfg)
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"message": "Scanner configuration updated",
@@ -302,7 +323,8 @@ func (h *ScanHandlers) TestScanNotification(w http.ResponseWriter, r *http.Reque
 
 	notifier := scanner.NewNotifier()
 	if err := notifier.SendTestNotification(cfg.Notifications.DiscordWebhookURL, cfg.Notifications.SlackWebhookURL); err != nil {
-		http.Error(w, "notification test failed: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("Test notification failed: %v", err)
+		http.Error(w, "notification test failed", http.StatusInternalServerError)
 		return
 	}
 

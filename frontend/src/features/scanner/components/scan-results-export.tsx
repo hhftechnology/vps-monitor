@@ -43,7 +43,7 @@ export function ScanResultsExport({ result }: ScanResultsExportProps) {
       v.fixed_version || "",
     ]);
 
-    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
+    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     downloadFile(csv, `scan-${result.image_ref.replace(/[/:]/g, "_")}.csv`, "text/csv");
   };
 

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -144,10 +143,9 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 	s.mu.Unlock()
 
 	// Schedule cleanup after 1 hour
-	go func() {
-		time.Sleep(1 * time.Hour)
+	time.AfterFunc(1*time.Hour, func() {
 		os.Remove(filePath)
-	}()
+	})
 }
 
 func (s *ScannerService) updateSBOMStatus(job *models.SBOMJob, status models.ScanJobStatus, errMsg string) {
@@ -224,8 +222,3 @@ func RunSBOMWithTrivy(ctx context.Context, dockerClient *client.Client, trivyIma
 // getContainerLogs is defined in grype.go, avoid redeclaration by using the existing one.
 // demuxDockerLogs is defined in grype.go, shared across the package.
 // normalizeSeverity is defined in grype.go, shared across the package.
-
-func sanitizeImageRefForFilename(imageRef string) string {
-	r := strings.NewReplacer("/", "_", ":", "_", ".", "_")
-	return r.Replace(imageRef)
-}

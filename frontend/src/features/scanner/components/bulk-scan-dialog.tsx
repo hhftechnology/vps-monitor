@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ShieldCheckIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -77,29 +77,33 @@ export function BulkScanDialog({ isOpen, onOpenChange }: BulkScanDialogProps) {
     onOpenChange(open);
   };
 
-  const aggregateSummary: SeveritySummary = {
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-    negligible: 0,
-    unknown: 0,
-    total: 0,
-  };
+  const aggregateSummary = useMemo(() => {
+    const summary: SeveritySummary = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      negligible: 0,
+      unknown: 0,
+      total: 0,
+    };
 
-  if (bulkJob) {
-    for (const job of bulkJob.jobs) {
-      if (job.result) {
-        aggregateSummary.critical += job.result.summary.critical;
-        aggregateSummary.high += job.result.summary.high;
-        aggregateSummary.medium += job.result.summary.medium;
-        aggregateSummary.low += job.result.summary.low;
-        aggregateSummary.negligible += job.result.summary.negligible;
-        aggregateSummary.unknown += job.result.summary.unknown;
-        aggregateSummary.total += job.result.summary.total;
+    if (bulkJob?.jobs) {
+      for (const job of bulkJob.jobs) {
+        if (job.result) {
+          summary.critical += job.result.summary.critical;
+          summary.high += job.result.summary.high;
+          summary.medium += job.result.summary.medium;
+          summary.low += job.result.summary.low;
+          summary.negligible += job.result.summary.negligible;
+          summary.unknown += job.result.summary.unknown;
+          summary.total += job.result.summary.total;
+        }
       }
     }
-  }
+    
+    return summary;
+  }, [bulkJob?.jobs]);
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -117,9 +121,9 @@ export function BulkScanDialog({ isOpen, onOpenChange }: BulkScanDialogProps) {
         {!started ? (
           <div className="space-y-4">
             <div className="space-y-1">
-              <label className="text-sm font-medium">Scanner</label>
+              <label htmlFor="scanner-select" className="text-sm font-medium">Scanner</label>
               <Select value={scanner} onValueChange={(value) => setScanner(value as ScannerType)}>
-                <SelectTrigger className="w-40">
+                <SelectTrigger id="scanner-select" className="w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
