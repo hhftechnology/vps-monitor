@@ -73,3 +73,74 @@ func TestApplyCoolifyEnvSyncPropagatesSyncErrors(t *testing.T) {
 		t.Fatalf("unexpected coolify_error: %#v", response["coolify_error"])
 	}
 }
+
+func TestApplyCoolifyEnvSyncSucceeds(t *testing.T) {
+	syncer := &fakeCoolifySyncer{}
+	response := map[string]any{}
+
+	applyCoolifyEnvSync(context.Background(), "host-a", syncer, &coolify.ResourceInfo{
+		Type: coolify.ResourceTypeApplication,
+		UUID: "resource-1",
+	}, map[string]string{"KEY": "VALUE"}, response)
+
+	if !syncer.called {
+		t.Fatalf("expected SyncEnvVars to be called")
+	}
+	if got, ok := response["coolify_synced"].(bool); !ok || !got {
+		t.Fatalf("expected coolify_synced=true, got %#v", response["coolify_synced"])
+	}
+	if _, hasError := response["coolify_error"]; hasError {
+		t.Fatalf("expected no coolify_error key on success, got %#v", response["coolify_error"])
+	}
+}
+
+func TestApplyCoolifyEnvSyncNilSyncer(t *testing.T) {
+	response := map[string]any{}
+
+	applyCoolifyEnvSync(context.Background(), "host-a", nil, &coolify.ResourceInfo{
+		Type: coolify.ResourceTypeApplication,
+		UUID: "resource-1",
+	}, map[string]string{"KEY": "VALUE"}, response)
+
+	if len(response) != 0 {
+		t.Fatalf("expected empty response when syncer is nil, got %#v", response)
+	}
+}
+
+func TestApplyCoolifyEnvSyncNilResource(t *testing.T) {
+	syncer := &fakeCoolifySyncer{}
+	response := map[string]any{}
+
+	applyCoolifyEnvSync(context.Background(), "host-a", syncer, nil,
+		map[string]string{"KEY": "VALUE"}, response)
+
+	if syncer.called {
+		t.Fatalf("expected SyncEnvVars not to be called when resource is nil")
+	}
+	if len(response) != 0 {
+		t.Fatalf("expected empty response when resource is nil, got %#v", response)
+	}
+}
+
+func TestApplyCoolifyEnvSyncServiceResourceType(t *testing.T) {
+	syncer := &fakeCoolifySyncer{}
+	response := map[string]any{}
+
+	applyCoolifyEnvSync(context.Background(), "host-a", syncer, &coolify.ResourceInfo{
+		Type: coolify.ResourceTypeService,
+		UUID: "resource-1",
+	}, map[string]string{"KEY": "VALUE"}, response)
+
+	if !syncer.called {
+		t.Fatalf("expected SyncEnvVars to be called for service resources")
+	}
+	if got, ok := response["coolify_synced"].(bool); !ok || !got {
+		t.Fatalf("expected coolify_synced=true for service resource, got %#v", response["coolify_synced"])
+	}
+}
+
+func TestSettingsErrorStatusDirectErrEnvironmentConfigured(t *testing.T) {
+	if got := settingsErrorStatus(config.ErrEnvironmentConfigured); got != http.StatusConflict {
+		t.Fatalf("expected %d for direct ErrEnvironmentConfigured, got %d", http.StatusConflict, got)
+	}
+}
