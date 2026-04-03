@@ -5,6 +5,7 @@ import { AuthSection } from "./auth-section";
 import { CoolifyHostsSection } from "./coolify-hosts-section";
 import { DockerHostsSection } from "./docker-hosts-section";
 import { ReadOnlySection } from "./read-only-section";
+import { ScannerSection } from "./scanner-section";
 
 export function SettingsPage() {
   const { data, isLoading, error } = useSettings();
@@ -43,6 +44,7 @@ export function SettingsPage() {
       <CoolifyHostsSection config={data.coolifyHosts} />
       <ReadOnlySection config={data.readOnly} />
       <AuthSection config={data.auth} />
+      <ScannerSection disabled={data.readOnly.value} />
     </div>
   );
 }

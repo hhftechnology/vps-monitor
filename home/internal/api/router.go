@@ -14,6 +14,7 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/auth"
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/models"
+	"github.com/hhftechnology/vps-monitor/internal/scanner"
 	"github.com/hhftechnology/vps-monitor/internal/services"
 	"github.com/hhftechnology/vps-monitor/internal/static"
 )
@@ -30,11 +31,13 @@ type APIRouter struct {
 	registry      *services.Registry
 	manager       *config.Manager
 	alertHandlers *AlertHandlers
+	scanHandlers  *ScanHandlers
 }
 
 // RouterOptions contains optional dependencies for the router
 type RouterOptions struct {
-	AlertMonitor *alerts.Monitor
+	AlertMonitor   *alerts.Monitor
+	ScannerService *scanner.ScannerService
 }
 
 func NewRouter(registry *services.Registry, manager *config.Manager, opts *RouterOptions) *chi.Mux {
@@ -44,6 +47,13 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 		router:   chi.NewRouter(),
 		registry: registry,
 		manager:  manager,
+	}
+
+	// Set up scan handlers
+	if opts != nil && opts.ScannerService != nil {
+		r.scanHandlers = NewScanHandlers(opts.ScannerService, manager)
+	} else {
+		r.scanHandlers = nil
 	}
 
 	// Set up alert handlers
@@ -114,6 +124,7 @@ func (ar *APIRouter) Routes() *chi.Mux {
 			ar.registerImageRoutes(protected)
 			ar.registerNetworkRoutes(protected)
 			ar.registerAlertRoutes(protected)
+			ar.registerScanRoutes(protected)
 		})
 	})
 
@@ -190,6 +201,30 @@ func (ar *APIRouter) registerAlertRoutes(r chi.Router) {
 	r.Post("/alerts/acknowledge-all", ar.alertHandlers.AcknowledgeAllAlerts)
 }
 
+func (ar *APIRouter) registerScanRoutes(r chi.Router) {
+	if ar.scanHandlers == nil {
+		return
+	}
+
+	// Read-only routes
+	r.Get("/scan/jobs", ar.scanHandlers.GetScanJobs)
+	r.Get("/scan/jobs/{id}", ar.scanHandlers.GetScanJob)
+	r.Get("/scan/results/{imageRef}", ar.scanHandlers.GetScanResults)
+	r.Get("/scan/results/{imageRef}/latest", ar.scanHandlers.GetLatestScanResult)
+	r.Get("/scan/sbom/{id}", ar.scanHandlers.GetSBOMJob)
+
+	// Mutating routes (blocked in read-only mode)
+	r.Group(func(mutating chi.Router) {
+		mutating.Use(middleware.ReadOnly(func() bool {
+			return ar.registry.Config().ReadOnly
+		}))
+		mutating.Post("/scan", ar.scanHandlers.StartScan)
+		mutating.Post("/scan/bulk", ar.scanHandlers.StartBulkScan)
+		mutating.Delete("/scan/jobs/{id}", ar.scanHandlers.CancelScanJob)
+		mutating.Post("/scan/sbom", ar.scanHandlers.StartSBOMGeneration)
+	})
+}
+
 func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 	r.Route("/settings", func(r chi.Router) {
 		r.Use(auth.DynamicMiddleware(ar.registry.Auth))
@@ -201,6 +236,11 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 		r.Put("/auth", ar.UpdateAuth)
 		r.Post("/test/docker-host", ar.TestDockerHost)
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
+		if ar.scanHandlers != nil {
+			r.Get("/scan", ar.scanHandlers.GetScannerConfig)
+			r.Put("/scan", ar.scanHandlers.UpdateScannerConfig)
+			r.Post("/scan/test-notification", ar.scanHandlers.TestScanNotification)
+		}
 	})
 }
 

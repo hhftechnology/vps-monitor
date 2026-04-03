@@ -15,12 +15,33 @@ import (
 	"time"
 )
 
+// FileScannerConfig represents scanner settings stored in the config file.
+type FileScannerConfig struct {
+	GrypeImage     string                  `json:"grypeImage,omitempty"`
+	TrivyImage     string                  `json:"trivyImage,omitempty"`
+	SyftImage      string                  `json:"syftImage,omitempty"`
+	DefaultScanner string                  `json:"defaultScanner,omitempty"`
+	GrypeArgs      string                  `json:"grypeArgs,omitempty"`
+	TrivyArgs      string                  `json:"trivyArgs,omitempty"`
+	Notifications  *FileNotificationConfig `json:"notifications,omitempty"`
+}
+
+// FileNotificationConfig represents notification settings stored in the config file.
+type FileNotificationConfig struct {
+	DiscordWebhookURL string `json:"discordWebhookURL,omitempty"`
+	SlackWebhookURL   string `json:"slackWebhookURL,omitempty"`
+	OnScanComplete    *bool  `json:"onScanComplete,omitempty"`
+	OnBulkComplete    *bool  `json:"onBulkComplete,omitempty"`
+	MinSeverity       string `json:"minSeverity,omitempty"`
+}
+
 // FileConfig represents the JSON config file structure.
 type FileConfig struct {
 	DockerHosts  []DockerHost        `json:"dockerHosts,omitempty"`
 	CoolifyHosts []CoolifyHostConfig `json:"coolifyHosts,omitempty"`
 	ReadOnly     *bool               `json:"readOnly,omitempty"`
 	Auth         *FileAuthConfig     `json:"auth,omitempty"`
+	Scanner      *FileScannerConfig  `json:"scanner,omitempty"`
 }
 
 // Source indicates where a config value came from.
@@ -187,26 +208,6 @@ func (m *Manager) UpdateCoolifyHosts(hosts []CoolifyHostConfig) error {
 	}
 
 	m.mu.Lock()
-
-	if m.envSnapshot.CoolifySet {
-		envNames := make(map[string]bool)
-		for _, h := range m.envConfig.CoolifyHosts {
-			envNames[h.HostName] = true
-		}
-		for _, h := range hosts {
-			if envNames[h.HostName] {
-				m.mu.Unlock()
-				return fmt.Errorf("%w: coolify host %q is defined via environment variable and cannot be managed from the UI", ErrEnvironmentConfigured, h.HostName)
-			}
-		}
-	}
-	m.mu.Unlock()
-
-	if err := validateCoolifyHosts(hosts); err != nil {
-		return err
-	}
-
-	m.mu.Lock()
 	if m.envSnapshot.CoolifySet {
 		envNames := make(map[string]bool)
 		for _, h := range m.envConfig.CoolifyHosts {
@@ -352,6 +353,21 @@ func (m *Manager) UpdateAuth(mutate func(current *FileAuthConfig) (*FileAuthConf
 	return nil
 }
 
+// UpdateScannerConfig updates the scanner configuration in the file config.
+func (m *Manager) UpdateScannerConfig(scanner *FileScannerConfig) error {
+	m.mu.Lock()
+
+	oldScanner := m.fileConfig.Scanner
+	m.fileConfig.Scanner = scanner
+	if err := m.persist(); err != nil {
+		m.fileConfig.Scanner = oldScanner
+		m.mu.Unlock()
+		return err
+	}
+	m.remerge()
+	return nil
+}
+
 // merge produces the merged config and source tracking. Must be called with lock held.
 func (m *Manager) merge() (*Config, ConfigSources) {
 	cfg := &Config{}
@@ -427,6 +443,46 @@ func (m *Manager) merge() (*Config, ConfigSources) {
 		sources.Auth = SourceFile
 	} else {
 		sources.Auth = SourceDefault
+	}
+
+	// Scanner: start with env config, override with file config where set
+	cfg.Scanner = m.envConfig.Scanner
+	if fc := m.fileConfig.Scanner; fc != nil {
+		if fc.GrypeImage != "" {
+			cfg.Scanner.GrypeImage = fc.GrypeImage
+		}
+		if fc.TrivyImage != "" {
+			cfg.Scanner.TrivyImage = fc.TrivyImage
+		}
+		if fc.SyftImage != "" {
+			cfg.Scanner.SyftImage = fc.SyftImage
+		}
+		if fc.DefaultScanner != "" {
+			cfg.Scanner.DefaultScanner = fc.DefaultScanner
+		}
+		if fc.GrypeArgs != "" {
+			cfg.Scanner.GrypeArgs = fc.GrypeArgs
+		}
+		if fc.TrivyArgs != "" {
+			cfg.Scanner.TrivyArgs = fc.TrivyArgs
+		}
+		if fc.Notifications != nil {
+			if fc.Notifications.DiscordWebhookURL != "" {
+				cfg.Scanner.DiscordWebhookURL = fc.Notifications.DiscordWebhookURL
+			}
+			if fc.Notifications.SlackWebhookURL != "" {
+				cfg.Scanner.SlackWebhookURL = fc.Notifications.SlackWebhookURL
+			}
+			if fc.Notifications.OnScanComplete != nil {
+				cfg.Scanner.NotifyOnComplete = *fc.Notifications.OnScanComplete
+			}
+			if fc.Notifications.OnBulkComplete != nil {
+				cfg.Scanner.NotifyOnBulk = *fc.Notifications.OnBulkComplete
+			}
+			if fc.Notifications.MinSeverity != "" {
+				cfg.Scanner.NotifyMinSeverity = fc.Notifications.MinSeverity
+			}
+		}
 	}
 
 	return cfg, sources

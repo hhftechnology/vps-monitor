@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +23,19 @@ var envKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type coolifyEnvSyncer interface {
 	SyncEnvVars(ctx context.Context, resource *coolify.ResourceInfo, envVars map[string]string) error
+}
+
+func isNilCoolifySyncer(syncer coolifyEnvSyncer) bool {
+	if syncer == nil {
+		return true
+	}
+	value := reflect.ValueOf(syncer)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func (ar *APIRouter) GetSystemStats(w http.ResponseWriter, r *http.Request) {
@@ -299,11 +313,11 @@ func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Reque
 
 func (ar *APIRouter) streamParsedLogs(w http.ResponseWriter, host, id string, options models.LogOptions) {
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
+	defer releaseDocker()
 	if dockerClient == nil {
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	defer releaseDocker()
 
 	stream, err := dockerClient.StreamContainerLogsParsed(host, id, options)
 	if err != nil {
@@ -448,15 +462,19 @@ func (ar *APIRouter) UpdateEnvVariables(w http.ResponseWriter, r *http.Request) 
 	coolifyMulti := ar.registry.Coolify()
 	if coolifyMulti != nil {
 		coolifyClient := coolifyMulti.GetClient(host)
-		coolifyResource := coolify.ExtractResourceInfo(labels)
-		applyCoolifyEnvSync(r.Context(), host, coolifyClient, coolifyResource, envVariables.Env, response)
+		if isNilCoolifySyncer(coolifyClient) {
+			log.Printf("Warning: Coolify client unavailable for host %s; skipping env sync", host)
+		} else {
+			coolifyResource := coolify.ExtractResourceInfo(labels)
+			applyCoolifyEnvSync(r.Context(), host, coolifyClient, coolifyResource, envVariables.Env, response)
+		}
 	}
 
 	WriteJsonResponse(w, http.StatusOK, response)
 }
 
 func applyCoolifyEnvSync(ctx context.Context, host string, syncer coolifyEnvSyncer, resource *coolify.ResourceInfo, env map[string]string, response map[string]any) {
-	if syncer == nil || resource == nil {
+	if isNilCoolifySyncer(syncer) || resource == nil {
 		return
 	}
 	if resource.Type == coolify.ResourceTypeDatabase {

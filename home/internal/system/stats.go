@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -23,8 +24,8 @@ type HostInfo struct {
 	KernelVersion   string `json:"kernelVersion"`
 	Arch            string `json:"arch"`
 	Uptime          uint64 `json:"uptime"`
-	CPULogical      int    `json:"cpuLogical"`
-	CPUPhysical     int    `json:"cpuPhysical,omitempty"`
+	CPULogical      *int   `json:"cpuLogical"`
+	CPUPhysical     *int   `json:"cpuPhysical"`
 }
 
 type Usage struct {
@@ -37,6 +38,12 @@ type Usage struct {
 	DiskUsed      uint64  `json:"diskUsed"`
 }
 
+var (
+	cpuCountsOnce     sync.Once
+	cachedCPULogical  *int
+	cachedCPUPhysical *int
+)
+
 // Init configures gopsutil to use the host's /proc directory if mounted
 func Init() {
 	// If we are running in a container and have mounted /proc to /host/proc,
@@ -44,6 +51,20 @@ func Init() {
 	if _, err := os.Stat("/host/proc"); err == nil {
 		os.Setenv("HOST_PROC", "/host/proc")
 	}
+}
+
+func loadCPUCounts(ctx context.Context) {
+	if cpuLogical, err := cpu.CountsWithContext(ctx, true); err == nil {
+		cachedCPULogical = intPtr(cpuLogical)
+	}
+
+	if cpuPhysical, err := cpu.CountsWithContext(ctx, false); err == nil {
+		cachedCPUPhysical = intPtr(cpuPhysical)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func GetStats(ctx context.Context) (*SystemStats, error) {
@@ -73,15 +94,9 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 		cpuPercent = cpuPercents[0]
 	}
 
-	cpuLogical, err := cpu.CountsWithContext(ctx, true)
-	if err != nil {
-		cpuLogical = 0
-	}
-
-	cpuPhysical, err := cpu.CountsWithContext(ctx, false)
-	if err != nil {
-		cpuPhysical = 0
-	}
+	cpuCountsOnce.Do(func() {
+		loadCPUCounts(ctx)
+	})
 
 	// Get Disk Usage for root partition
 	// If running in container with /host mounted, use /host, otherwise use /
@@ -107,8 +122,8 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 			KernelVersion:   hInfo.KernelVersion,
 			Arch:            runtime.GOARCH,
 			Uptime:          hInfo.Uptime,
-			CPULogical:      cpuLogical,
-			CPUPhysical:     cpuPhysical,
+			CPULogical:      cachedCPULogical,
+			CPUPhysical:     cachedCPUPhysical,
 		},
 		Usage: Usage{
 			CPUPercent:    cpuPercent,

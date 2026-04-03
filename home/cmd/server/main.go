@@ -10,6 +10,8 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
+	"github.com/hhftechnology/vps-monitor/internal/models"
+	"github.com/hhftechnology/vps-monitor/internal/scanner"
 	"github.com/hhftechnology/vps-monitor/internal/services"
 	"github.com/hhftechnology/vps-monitor/internal/system"
 )
@@ -30,14 +32,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize auth service: %v\nPlease ensure ALL auth environment variables are set: JWT_SECRET, ADMIN_USERNAME, and ADMIN_PASSWORD.", err)
 	}
-	if authService.IsDisabled() {
+	if authService == nil || authService.IsDisabled() {
 		fc := manager.FileConfigSnapshot()
 		if fc.Auth != nil && fc.Auth.Enabled {
 			authService = auth.NewServiceFromFileConfig(fc.Auth)
 		}
 	}
 
-	if authService.IsDisabled() {
+	if authService == nil || authService.IsDisabled() {
 		log.Println("Authentication is DISABLED - no auth environment variables detected")
 		log.Println("   To enable authentication, set: JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD")
 	} else {
@@ -81,6 +83,25 @@ func main() {
 
 	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
 
+	// Scanner service
+	scannerCfg := &models.ScannerConfig{
+		GrypeImage:     cfg.Scanner.GrypeImage,
+		TrivyImage:     cfg.Scanner.TrivyImage,
+		SyftImage:      cfg.Scanner.SyftImage,
+		DefaultScanner: models.ScannerType(cfg.Scanner.DefaultScanner),
+		GrypeArgs:      cfg.Scanner.GrypeArgs,
+		TrivyArgs:      cfg.Scanner.TrivyArgs,
+		Notifications: models.NotificationConfig{
+			DiscordWebhookURL: cfg.Scanner.DiscordWebhookURL,
+			SlackWebhookURL:   cfg.Scanner.SlackWebhookURL,
+			OnScanComplete:    cfg.Scanner.NotifyOnComplete,
+			OnBulkComplete:    cfg.Scanner.NotifyOnBulk,
+			MinSeverity:       models.SeverityLevel(cfg.Scanner.NotifyMinSeverity),
+		},
+	}
+	scannerService := scanner.NewScannerService(registry, scannerCfg)
+	log.Printf("Vulnerability scanner ready (default: %s)", cfg.Scanner.DefaultScanner)
+
 	// Hot-reload callback
 	manager.OnChange(func(newCfg *config.Config) {
 		registry.UpdateConfig(newCfg)
@@ -114,7 +135,8 @@ func main() {
 	})
 
 	routerOpts := &api.RouterOptions{
-		AlertMonitor: alertMonitor,
+		AlertMonitor:   alertMonitor,
+		ScannerService: scannerService,
 	}
 	apiRouter := api.NewRouter(registry, manager, routerOpts)
 
