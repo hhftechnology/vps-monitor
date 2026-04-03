@@ -7,6 +7,30 @@
 [![Discord](https://img.shields.io/discord/994247717368909884?logo=discord&style=flat-square)](https://discord.gg/HDCt9MjyMJ)
 </div>
 
+<img width="1735" height="1058" alt="image" src="https://github.com/user-attachments/assets/35241a4e-d523-40eb-9455-ed33ab837b66" />
+
+<img width="1735" height="1467" alt="image" src="https://github.com/user-attachments/assets/ccb23590-8ecd-4c89-89ea-68a24db69418" />
+
+## Stats
+
+<img width="1735" height="802" alt="image" src="https://github.com/user-attachments/assets/78cdc82e-9d9f-4734-aae6-592b0374ec61" />
+<img width="1735" height="1019" alt="image" src="https://github.com/user-attachments/assets/6327ae11-c719-42d1-8e06-9ff41c398395" />
+
+## Images Managment
+
+<img width="1735" height="988" alt="image" src="https://github.com/user-attachments/assets/c791ef58-cd27-4c54-b9e3-f07d1ca34227" />
+
+## Network Info
+
+<img width="1735" height="802" alt="image" src="https://github.com/user-attachments/assets/a8f87c44-fde5-4923-8549-6cf706113678" />
+<img width="672" height="885" alt="image" src="https://github.com/user-attachments/assets/0cb67ac4-2784-4bf7-bc93-9477d2601919" />
+
+## Grouping by Compose files
+<img width="1735" height="1133" alt="image" src="https://github.com/user-attachments/assets/f83f9ed6-6642-400a-8d71-6be944143aab" />
+
+
+
+
 ## Table of Contents
 
 - [Features](#features)

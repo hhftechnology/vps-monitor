@@ -194,7 +194,7 @@ func isBcryptHash(hash string) bool {
 		return false
 	}
 	prefix := hash[:4]
-	if prefix != "$2a$" && prefix != "$2b$" && prefix != "$2y$" {
+	if prefix != "$2a$" && prefix != "$2b$" && prefix != "$2x$" && prefix != "$2y$" {
 		return false
 	}
 	if hash[6] != '$' {

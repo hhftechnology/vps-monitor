@@ -121,7 +121,7 @@ export function CoolifyHostsSection({ config }: CoolifyHostsSectionProps) {
     }
     const next = [...fileHosts];
     next[editingIndex] = {
-      hostName: editingHost.hostName.trim(),
+      hostName: trimmedName,
       apiURL: editingHost.apiURL.trim(),
       apiToken: editingHost.apiToken.trim(),
     };
