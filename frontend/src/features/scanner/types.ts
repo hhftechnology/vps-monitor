@@ -73,7 +73,13 @@ export interface NotificationConfig {
   slackWebhookURL?: string;
   onScanComplete: boolean;
   onBulkComplete: boolean;
+  onNewCVEs: boolean;
   minSeverity?: SeverityLevel;
+}
+
+export interface AutoScanConfig {
+  enabled: boolean;
+  pollIntervalMinutes?: number;
 }
 
 export interface ScannerConfig {
@@ -84,4 +90,46 @@ export interface ScannerConfig {
   grypeArgs: string;
   trivyArgs: string;
   notifications: NotificationConfig;
+  autoScan: AutoScanConfig;
+  forceRescan: boolean;
+}
+
+export interface HistoryQueryParams {
+  image?: string;
+  host?: string;
+  min_severity?: SeverityLevel;
+  start_date?: number;
+  end_date?: number;
+  page?: number;
+  page_size?: number;
+  sort_by?: "completed_at" | "summary_total" | "summary_critical";
+  sort_dir?: "asc" | "desc";
+}
+
+export interface HistoryPage {
+  results: ScanResult[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface ScannedImage {
+  image_ref: string;
+  host: string;
+  scan_count: number;
+  last_scanned: number;
+}
+
+export interface AutoScanStatus {
+  enabled: boolean;
+  lastPollAt: number;
+  eventsConnected: Record<string, boolean>;
+}
+
+export interface RescanBlockedResponse {
+  error: "image_unchanged";
+  message: string;
+  last_scan_id?: string;
+  last_scan_at?: number;
 }

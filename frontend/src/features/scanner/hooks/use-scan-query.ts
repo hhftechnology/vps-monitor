@@ -10,7 +10,13 @@ import {
   updateScannerConfig,
   testScanNotification,
 } from "../api/scanner-config";
-import type { ScannerConfig } from "../types";
+import {
+  getScanHistory,
+  getScanHistoryDetail,
+  getScannedImages,
+  getAutoScanStatus,
+} from "../api/get-scan-history";
+import type { ScannerConfig, HistoryQueryParams } from "../types";
 
 const SCANNER_CONFIG_KEY = ["scannerConfig"] as const;
 
@@ -103,5 +109,40 @@ export function useSBOMJob(id: string | null, enabled = true) {
       }
       return 2000;
     },
+  });
+}
+
+// --- History hooks ---
+
+export function useScanHistory(params: HistoryQueryParams) {
+  return useQuery({
+    queryKey: ["scanHistory", params],
+    queryFn: () => getScanHistory(params),
+    staleTime: 10_000,
+  });
+}
+
+export function useScanHistoryDetail(id: string | null) {
+  return useQuery({
+    queryKey: ["scanHistoryDetail", id],
+    queryFn: () => getScanHistoryDetail(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
+export function useScannedImages() {
+  return useQuery({
+    queryKey: ["scannedImages"],
+    queryFn: getScannedImages,
+    staleTime: 30_000,
+  });
+}
+
+export function useAutoScanStatus() {
+  return useQuery({
+    queryKey: ["autoScanStatus"],
+    queryFn: getAutoScanStatus,
+    staleTime: 15_000,
   });
 }

@@ -38,6 +38,7 @@ type APIRouter struct {
 type RouterOptions struct {
 	AlertMonitor   *alerts.Monitor
 	ScannerService *scanner.ScannerService
+	AutoScanner    *scanner.AutoScanner
 }
 
 func NewRouter(registry *services.Registry, manager *config.Manager, opts *RouterOptions) *chi.Mux {
@@ -52,6 +53,9 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 	// Set up scan handlers
 	if opts != nil && opts.ScannerService != nil {
 		r.scanHandlers = NewScanHandlers(opts.ScannerService, manager)
+		if opts.AutoScanner != nil {
+			r.scanHandlers.SetAutoScanner(opts.AutoScanner)
+		}
 	} else {
 		r.scanHandlers = nil
 	}
@@ -212,6 +216,14 @@ func (ar *APIRouter) registerScanRoutes(r chi.Router) {
 	r.Get("/scan/results", ar.scanHandlers.GetScanResults)
 	r.Get("/scan/results/latest", ar.scanHandlers.GetLatestScanResult)
 	r.Get("/scan/sbom/{id}", ar.scanHandlers.GetSBOMJob)
+
+	// History routes
+	r.Get("/scan/history", ar.scanHandlers.GetScanHistory)
+	r.Get("/scan/history/images", ar.scanHandlers.GetScannedImages)
+	r.Get("/scan/history/{id}", ar.scanHandlers.GetScanHistoryDetail)
+
+	// Auto-scan status
+	r.Get("/scan/autoscan/status", ar.scanHandlers.GetAutoScanStatus)
 
 	// Mutating routes (blocked in read-only mode)
 	r.Group(func(mutating chi.Router) {

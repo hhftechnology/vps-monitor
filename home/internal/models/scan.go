@@ -122,6 +122,8 @@ type ScannerConfig struct {
 	GrypeArgs      string             `json:"grypeArgs"`
 	TrivyArgs      string             `json:"trivyArgs"`
 	Notifications  NotificationConfig `json:"notifications"`
+	AutoScan       AutoScanConfig     `json:"autoScan"`
+	ForceRescan    bool               `json:"forceRescan"`
 }
 
 // NotificationConfig holds notification webhook configuration
@@ -130,5 +132,12 @@ type NotificationConfig struct {
 	SlackWebhookURL   string        `json:"slackWebhookURL,omitempty"`
 	OnScanComplete    bool          `json:"onScanComplete"`
 	OnBulkComplete    bool          `json:"onBulkComplete"`
+	OnNewCVEs         bool          `json:"onNewCVEs"`
 	MinSeverity       SeverityLevel `json:"minSeverity,omitempty"`
+}
+
+// AutoScanConfig holds configuration for automatic scanning on image pulls.
+type AutoScanConfig struct {
+	Enabled      bool `json:"enabled"`
+	PollInterval int  `json:"pollIntervalMinutes,omitempty"` // default 15
 }

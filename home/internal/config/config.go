@@ -41,17 +41,21 @@ type AlertConfig struct {
 
 // ScannerConfig holds configuration for vulnerability scanning
 type ScannerConfig struct {
-	GrypeImage         string
-	TrivyImage         string
-	SyftImage          string
-	DefaultScanner     string
-	GrypeArgs          string
-	TrivyArgs          string
-	DiscordWebhookURL  string
-	SlackWebhookURL    string
-	NotifyOnComplete   bool
-	NotifyOnBulk       bool
-	NotifyMinSeverity  string
+	GrypeImage           string
+	TrivyImage           string
+	SyftImage            string
+	DefaultScanner       string
+	GrypeArgs            string
+	TrivyArgs            string
+	DiscordWebhookURL    string
+	SlackWebhookURL      string
+	NotifyOnComplete     bool
+	NotifyOnBulk         bool
+	NotifyOnNewCVEs      bool
+	NotifyMinSeverity    string
+	AutoScanEnabled      bool
+	AutoScanPollInterval int // minutes, default 15
+	ForceRescan          bool
 }
 
 type Config struct {
@@ -172,17 +176,21 @@ func parseCoolifyHostConfigs() []CoolifyHostConfig {
 
 func parseScannerConfig() ScannerConfig {
 	cfg := ScannerConfig{
-		GrypeImage:        "anchore/grype:v0.110.0",
-		TrivyImage:        "aquasec/trivy:0.69.3",
-		SyftImage:         "anchore/syft:v1.42.3",
-		DefaultScanner:    "grype",
-		GrypeArgs:         "",
-		TrivyArgs:         "",
-		DiscordWebhookURL: os.Getenv("SCANNER_DISCORD_WEBHOOK_URL"),
-		SlackWebhookURL:   os.Getenv("SCANNER_SLACK_WEBHOOK_URL"),
-		NotifyOnComplete:  true,
-		NotifyOnBulk:      true,
-		NotifyMinSeverity: "High",
+		GrypeImage:           "anchore/grype:v0.110.0",
+		TrivyImage:           "aquasec/trivy:0.69.3",
+		SyftImage:            "anchore/syft:v1.42.3",
+		DefaultScanner:       "grype",
+		GrypeArgs:            "",
+		TrivyArgs:            "",
+		DiscordWebhookURL:    os.Getenv("SCANNER_DISCORD_WEBHOOK_URL"),
+		SlackWebhookURL:      os.Getenv("SCANNER_SLACK_WEBHOOK_URL"),
+		NotifyOnComplete:     true,
+		NotifyOnBulk:         true,
+		NotifyOnNewCVEs:      true,
+		NotifyMinSeverity:    "High",
+		AutoScanEnabled:      os.Getenv("SCANNER_AUTO_SCAN") == "true",
+		AutoScanPollInterval: 15,
+		ForceRescan:          os.Getenv("SCANNER_FORCE_RESCAN") == "true",
 	}
 
 	if v := os.Getenv("SCANNER_GRYPE_IMAGE"); v != "" {
@@ -209,8 +217,16 @@ func parseScannerConfig() ScannerConfig {
 	if os.Getenv("SCANNER_NOTIFY_ON_BULK") == "false" {
 		cfg.NotifyOnBulk = false
 	}
+	if os.Getenv("SCANNER_NOTIFY_ON_NEW_CVES") == "false" {
+		cfg.NotifyOnNewCVEs = false
+	}
 	if v := os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY"); v != "" {
 		cfg.NotifyMinSeverity = v
+	}
+	if v := os.Getenv("SCANNER_AUTO_SCAN_POLL_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.AutoScanPollInterval = n
+		}
 	}
 
 	if cfg.DefaultScanner != "grype" && cfg.DefaultScanner != "trivy" {

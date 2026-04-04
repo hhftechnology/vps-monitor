@@ -35,10 +35,10 @@ type bulkScanState struct {
 }
 
 // NewScannerService creates a new scanner service.
-func NewScannerService(registry *services.Registry, cfg *models.ScannerConfig) *ScannerService {
+func NewScannerService(registry *services.Registry, cfg *models.ScannerConfig, db *ScanDB) *ScannerService {
 	s := &ScannerService{
 		registry: registry,
-		store:    NewScanResultStore(),
+		store:    NewScanResultStore(db),
 		notifier: NewNotifier(),
 		jobs:     make(map[string]*models.ScanJob),
 		bulkJobs: make(map[string]*bulkScanState),
@@ -62,6 +62,11 @@ func (s *ScannerService) Config() *models.ScannerConfig {
 // Store returns the scan result store.
 func (s *ScannerService) Store() *ScanResultStore {
 	return s.store
+}
+
+// Registry returns the service registry.
+func (s *ScannerService) Registry() *services.Registry {
+	return s.registry
 }
 
 // StartScan starts a single image vulnerability scan.
@@ -333,6 +338,11 @@ func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cance
 	if cfg.Notifications.OnScanComplete {
 		s.sendNotification(&result)
 	}
+
+	// Anomaly detection: compare with previous scan for new CVEs
+	if cfg.Notifications.OnNewCVEs {
+		s.checkAndNotifyAnomalies(&result)
+	}
 }
 
 func (s *ScannerService) runBulkScan(ctx context.Context, bulkJob *models.BulkScanJob, cancel context.CancelFunc) {
@@ -429,6 +439,46 @@ func (s *ScannerService) sendNotification(result *models.ScanResult) {
 	if cfg.Notifications.SlackWebhookURL != "" {
 		if err := s.notifier.SendSlack(cfg.Notifications.SlackWebhookURL, result, nil); err != nil {
 			log.Printf("Failed to send Slack notification: %v", err)
+		}
+	}
+}
+
+func (s *ScannerService) checkAndNotifyAnomalies(result *models.ScanResult) {
+	db := s.store.DB()
+	prevResult, err := db.GetPreviousResult(result.Host, result.ImageRef, result.ID)
+	if err != nil {
+		log.Printf("Failed to get previous scan result for anomaly detection: %v", err)
+		return
+	}
+	if prevResult == nil {
+		return // first scan, nothing to compare
+	}
+
+	newVulns := findNewVulnerabilities(prevResult.Vulnerabilities, result.Vulnerabilities)
+	if len(newVulns) == 0 {
+		return
+	}
+
+	cfg := s.Config()
+	filtered := filterBySeverity(newVulns, cfg.Notifications.MinSeverity)
+	if len(filtered) == 0 {
+		return
+	}
+
+	diff := computeAnomalyDiff(filtered)
+	s.sendAnomalyNotification(result, &diff)
+}
+
+func (s *ScannerService) sendAnomalyNotification(result *models.ScanResult, diff *AnomalyDiff) {
+	cfg := s.Config()
+	if cfg.Notifications.DiscordWebhookURL != "" {
+		if err := s.notifier.SendDiscordAnomaly(cfg.Notifications.DiscordWebhookURL, result, diff); err != nil {
+			log.Printf("Failed to send Discord anomaly notification: %v", err)
+		}
+	}
+	if cfg.Notifications.SlackWebhookURL != "" {
+		if err := s.notifier.SendSlackAnomaly(cfg.Notifications.SlackWebhookURL, result, diff); err != nil {
+			log.Printf("Failed to send Slack anomaly notification: %v", err)
 		}
 	}
 }

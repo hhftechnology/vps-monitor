@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hhftechnology/vps-monitor/internal/config"
@@ -14,8 +17,9 @@ import (
 
 // ScanHandlers holds dependencies for scan-related handlers
 type ScanHandlers struct {
-	scanner *scanner.ScannerService
-	manager *config.Manager
+	scanner     *scanner.ScannerService
+	manager     *config.Manager
+	autoScanner *scanner.AutoScanner
 }
 
 // NewScanHandlers creates new scan handlers
@@ -24,6 +28,11 @@ func NewScanHandlers(scannerService *scanner.ScannerService, manager *config.Man
 		scanner: scannerService,
 		manager: manager,
 	}
+}
+
+// SetAutoScanner sets the auto-scanner reference for status reporting.
+func (h *ScanHandlers) SetAutoScanner(as *scanner.AutoScanner) {
+	h.autoScanner = as
 }
 
 // StartScan handles POST /api/v1/scan
@@ -46,6 +55,32 @@ func (h *ScanHandlers) StartScan(w http.ResponseWriter, r *http.Request) {
 	if req.Scanner != "" && req.Scanner != "grype" && req.Scanner != "trivy" {
 		http.Error(w, "unsupported scanner, must be 'grype' or 'trivy'", http.StatusBadRequest)
 		return
+	}
+
+	// Rescan gating: check if image has changed since last scan
+	cfg := h.scanner.Config()
+	if !cfg.ForceRescan {
+		db := h.scanner.Store().DB()
+		// Resolve current image ID
+		currentImageID := h.resolveImageID(req.Host, req.ImageRef)
+		if currentImageID != "" {
+			canRescan, err := db.CanRescan(req.Host, req.ImageRef, currentImageID)
+			if err != nil {
+				log.Printf("Failed to check rescan eligibility: %v", err)
+			} else if !canRescan {
+				state, _ := db.GetImageScanState(req.Host, req.ImageRef)
+				resp := map[string]any{
+					"error":   "image_unchanged",
+					"message": "Image has not changed since last scan. Pull a new version or enable force rescan in settings.",
+				}
+				if state != nil {
+					resp["last_scan_id"] = state.LastScanID
+					resp["last_scan_at"] = state.LastScanAt
+				}
+				WriteJsonResponse(w, http.StatusConflict, resp)
+				return
+			}
+		}
 	}
 
 	job, err := h.scanner.StartScan(req.ImageRef, req.Host, req.Scanner)
@@ -273,8 +308,11 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 			SlackWebhookURL   string `json:"slackWebhookURL"`
 			OnScanComplete    *bool  `json:"onScanComplete"`
 			OnBulkComplete    *bool  `json:"onBulkComplete"`
+			OnNewCVEs         *bool  `json:"onNewCVEs"`
 			MinSeverity       string `json:"minSeverity"`
 		} `json:"notifications"`
+		AutoScan    *models.AutoScanConfig `json:"autoScan"`
+		ForceRescan *bool                  `json:"forceRescan"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -292,32 +330,48 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Persist to file config
-	fileCfg := &config.FileScannerConfig{
-		GrypeImage:     req.GrypeImage,
-		TrivyImage:     req.TrivyImage,
-		SyftImage:      req.SyftImage,
-		DefaultScanner: req.DefaultScanner,
+	// Build the full scanner config to save to DB
+	currentCfg := h.scanner.Config()
+	newCfg := &models.ScannerConfig{
+		GrypeImage:     orDefault(req.GrypeImage, currentCfg.GrypeImage),
+		TrivyImage:     orDefault(req.TrivyImage, currentCfg.TrivyImage),
+		SyftImage:      orDefault(req.SyftImage, currentCfg.SyftImage),
+		DefaultScanner: models.ScannerType(orDefault(req.DefaultScanner, string(currentCfg.DefaultScanner))),
 		GrypeArgs:      req.GrypeArgs,
 		TrivyArgs:      req.TrivyArgs,
-		Notifications: &config.FileNotificationConfig{
+		Notifications: models.NotificationConfig{
 			DiscordWebhookURL: req.Notifications.DiscordWebhookURL,
 			SlackWebhookURL:   req.Notifications.SlackWebhookURL,
-			OnScanComplete:    req.Notifications.OnScanComplete,
-			OnBulkComplete:    req.Notifications.OnBulkComplete,
-			MinSeverity:       req.Notifications.MinSeverity,
+			OnScanComplete:    boolPtrOrDefault(req.Notifications.OnScanComplete, currentCfg.Notifications.OnScanComplete),
+			OnBulkComplete:    boolPtrOrDefault(req.Notifications.OnBulkComplete, currentCfg.Notifications.OnBulkComplete),
+			OnNewCVEs:         boolPtrOrDefault(req.Notifications.OnNewCVEs, currentCfg.Notifications.OnNewCVEs),
+			MinSeverity:       models.SeverityLevel(orDefault(req.Notifications.MinSeverity, string(currentCfg.Notifications.MinSeverity))),
 		},
+		AutoScan:    currentCfg.AutoScan,
+		ForceRescan: currentCfg.ForceRescan,
 	}
 
-	if err := h.manager.UpdateScannerConfig(fileCfg); err != nil {
-		log.Printf("Failed to persist scanner config: %v", err)
+	if req.AutoScan != nil {
+		newCfg.AutoScan = *req.AutoScan
+	}
+	if req.ForceRescan != nil {
+		newCfg.ForceRescan = *req.ForceRescan
+	}
+
+	// Save to DB
+	db := h.scanner.Store().DB()
+	if err := db.SaveScannerSettings(newCfg); err != nil {
+		log.Printf("Failed to persist scanner config to DB: %v", err)
 		http.Error(w, "failed to update scanner config", http.StatusInternalServerError)
 		return
 	}
 
+	// Update runtime config
+	h.scanner.UpdateConfig(newCfg)
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"message": "Scanner configuration updated",
-		"config":  fileCfg,
+		"config":  newCfg,
 	})
 }
 
@@ -351,7 +405,142 @@ func configToScannerConfig(cfg *config.ScannerConfig) *models.ScannerConfig {
 			SlackWebhookURL:   cfg.SlackWebhookURL,
 			OnScanComplete:    cfg.NotifyOnComplete,
 			OnBulkComplete:    cfg.NotifyOnBulk,
+			OnNewCVEs:         cfg.NotifyOnNewCVEs,
 			MinSeverity:       models.SeverityLevel(cfg.NotifyMinSeverity),
 		},
+		AutoScan: models.AutoScanConfig{
+			Enabled:      cfg.AutoScanEnabled,
+			PollInterval: cfg.AutoScanPollInterval,
+		},
+		ForceRescan: cfg.ForceRescan,
 	}
+}
+
+// --- History Handlers ---
+
+// GetScanHistory handles GET /api/v1/scan/history
+func (h *ScanHandlers) GetScanHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	params := scanner.HistoryQuery{
+		ImageRef: q.Get("image"),
+		Host:     q.Get("host"),
+		MinSeverity: q.Get("min_severity"),
+		SortBy:   q.Get("sort_by"),
+		SortDir:  q.Get("sort_dir"),
+	}
+
+	if v := q.Get("page"); v != "" {
+		params.Page, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("page_size"); v != "" {
+		params.PageSize, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("start_date"); v != "" {
+		params.StartDate, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v := q.Get("end_date"); v != "" {
+		params.EndDate, _ = strconv.ParseInt(v, 10, 64)
+	}
+
+	db := h.scanner.Store().DB()
+	page, err := db.QueryHistory(params)
+	if err != nil {
+		log.Printf("Failed to query scan history: %v", err)
+		http.Error(w, "failed to query scan history", http.StatusInternalServerError)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, page)
+}
+
+// GetScanHistoryDetail handles GET /api/v1/scan/history/{id}
+func (h *ScanHandlers) GetScanHistoryDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "scan id is required", http.StatusBadRequest)
+		return
+	}
+
+	db := h.scanner.Store().DB()
+	result, err := db.GetResultByID(id)
+	if err != nil {
+		log.Printf("Failed to get scan result: %v", err)
+		http.Error(w, "failed to get scan result", http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		http.Error(w, "scan result not found", http.StatusNotFound)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"result": result,
+	})
+}
+
+// GetScannedImages handles GET /api/v1/scan/history/images
+func (h *ScanHandlers) GetScannedImages(w http.ResponseWriter, r *http.Request) {
+	db := h.scanner.Store().DB()
+	images, err := db.ListScannedImages()
+	if err != nil {
+		log.Printf("Failed to list scanned images: %v", err)
+		http.Error(w, "failed to list scanned images", http.StatusInternalServerError)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"images": images,
+	})
+}
+
+// GetAutoScanStatus handles GET /api/v1/scan/autoscan/status
+func (h *ScanHandlers) GetAutoScanStatus(w http.ResponseWriter, r *http.Request) {
+	if h.autoScanner == nil {
+		WriteJsonResponse(w, http.StatusOK, map[string]any{
+			"enabled":         false,
+			"lastPollAt":      0,
+			"eventsConnected": map[string]bool{},
+		})
+		return
+	}
+	WriteJsonResponse(w, http.StatusOK, h.autoScanner.Status())
+}
+
+// --- Helpers ---
+
+func (h *ScanHandlers) resolveImageID(host, imageRef string) string {
+	dockerClient, release := h.scanner.Registry().AcquireDocker()
+	if dockerClient == nil {
+		release()
+		return ""
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	apiClient, err := dockerClient.GetClient(host)
+	if err != nil {
+		return ""
+	}
+
+	inspect, _, err := apiClient.ImageInspectWithRaw(ctx, imageRef)
+	if err != nil {
+		return ""
+	}
+	return inspect.ID
+}
+
+func orDefault(val, def string) string {
+	if val != "" {
+		return val
+	}
+	return def
+}
+
+func boolPtrOrDefault(ptr *bool, def bool) bool {
+	if ptr != nil {
+		return *ptr
+	}
+	return def
 }

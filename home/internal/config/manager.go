@@ -110,7 +110,11 @@ func NewManager() *Manager {
 			os.Getenv("SCANNER_SLACK_WEBHOOK_URL") != "" ||
 			os.Getenv("SCANNER_NOTIFY_ON_COMPLETE") != "" ||
 			os.Getenv("SCANNER_NOTIFY_ON_BULK") != "" ||
-			os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY") != "",
+			os.Getenv("SCANNER_NOTIFY_ON_NEW_CVES") != "" ||
+			os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY") != "" ||
+			os.Getenv("SCANNER_AUTO_SCAN") != "" ||
+			os.Getenv("SCANNER_AUTO_SCAN_POLL_INTERVAL") != "" ||
+			os.Getenv("SCANNER_FORCE_RESCAN") != "",
 	}
 
 	// Load env-based config using existing parsers.

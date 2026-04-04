@@ -232,6 +232,68 @@ func (n *Notifier) buildSlackBulkPayload(bulkJob *models.BulkScanJob) map[string
 	}
 }
 
+// SendDiscordAnomaly sends an anomaly notification to Discord.
+func (n *Notifier) SendDiscordAnomaly(webhookURL string, result *models.ScanResult, diff *AnomalyDiff) error {
+	color := discordColor(diff.Summary)
+	fields := []map[string]interface{}{
+		{"name": "New Critical", "value": fmt.Sprintf("%d", diff.Summary.Critical), "inline": true},
+		{"name": "New High", "value": fmt.Sprintf("%d", diff.Summary.High), "inline": true},
+		{"name": "New Medium", "value": fmt.Sprintf("%d", diff.Summary.Medium), "inline": true},
+		{"name": "New Low", "value": fmt.Sprintf("%d", diff.Summary.Low), "inline": true},
+		{"name": "New Total", "value": fmt.Sprintf("%d", diff.Summary.Total), "inline": true},
+		{"name": "Scanner", "value": string(result.Scanner), "inline": true},
+	}
+
+	payload := map[string]interface{}{
+		"embeds": []map[string]interface{}{
+			{
+				"title":       "New Vulnerabilities Detected",
+				"description": fmt.Sprintf("**%s** on host **%s**\n%s", result.ImageRef, result.Host, diff.Message),
+				"color":       color,
+				"fields":      fields,
+				"footer":      map[string]string{"text": "VPS Monitor - Anomaly Detection"},
+				"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+
+	return n.sendWebhook(webhookURL, payload)
+}
+
+// SendSlackAnomaly sends an anomaly notification to Slack.
+func (n *Notifier) SendSlackAnomaly(webhookURL string, result *models.ScanResult, diff *AnomalyDiff) error {
+	summaryText := fmt.Sprintf("New Critical: %d | New High: %d | New Medium: %d | New Low: %d | New Total: %d",
+		diff.Summary.Critical, diff.Summary.High, diff.Summary.Medium,
+		diff.Summary.Low, diff.Summary.Total)
+
+	payload := map[string]interface{}{
+		"blocks": []map[string]interface{}{
+			{
+				"type": "header",
+				"text": map[string]string{
+					"type": "plain_text",
+					"text": "New Vulnerabilities Detected",
+				},
+			},
+			{
+				"type": "section",
+				"text": map[string]string{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("*%s* on host *%s*\n%s\n\n%s", result.ImageRef, result.Host, diff.Message, summaryText),
+				},
+			},
+			{
+				"type": "context",
+				"elements": []map[string]string{
+					{"type": "mrkdwn", "text": fmt.Sprintf("Scanner: %s | VPS Monitor - Anomaly Detection", result.Scanner)},
+				},
+			},
+		},
+	}
+
+	return n.sendWebhook(webhookURL, payload)
+}
+
 func (n *Notifier) sendWebhook(webhookURL string, payload map[string]interface{}) error {
 	if err := validateWebhookURL(webhookURL); err != nil {
 		return err

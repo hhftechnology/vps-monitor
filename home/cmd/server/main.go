@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/hhftechnology/vps-monitor/internal/alerts"
 	"github.com/hhftechnology/vps-monitor/internal/api"
@@ -83,10 +84,38 @@ func main() {
 
 	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
 
+	// Scanner database
+	dbPath := "/data/scanner.db"
+	if v := os.Getenv("SCANNER_DB_PATH"); v != "" {
+		dbPath = v
+	}
+	scanDB, err := scanner.NewScanDB(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open scan database: %v", err)
+	}
+	defer scanDB.Close()
+	log.Printf("Scan database opened at %s", dbPath)
+
+	// Build initial scanner config from env, then load/merge with DB settings
+	envScannerCfg := configToScannerConfig(cfg.Scanner)
+	if err := scanDB.MigrateFromFileConfig(envScannerCfg); err != nil {
+		log.Printf("Warning: failed to migrate scanner config to DB: %v", err)
+	}
+	scannerCfg := scanDB.LoadScannerSettings(envScannerCfg)
+
 	// Scanner service
-	scannerCfg := buildScannerConfig(cfg.Scanner)
-	scannerService := scanner.NewScannerService(registry, scannerCfg)
-	log.Printf("Vulnerability scanner ready (default: %s)", cfg.Scanner.DefaultScanner)
+	scannerService := scanner.NewScannerService(registry, scannerCfg, scanDB)
+	log.Printf("Vulnerability scanner ready (default: %s)", scannerCfg.DefaultScanner)
+
+	// Auto-scanner
+	autoScanner := scanner.NewAutoScanner(registry, scannerService, scanDB)
+	if scannerCfg.AutoScan.Enabled {
+		autoScanner.Start()
+		log.Println("Auto-scan is ENABLED")
+	} else {
+		log.Println("Auto-scan is DISABLED")
+	}
+	defer autoScanner.Stop()
 
 	// Hot-reload callback
 	manager.OnChange(func(newCfg *config.Config) {
@@ -117,8 +146,20 @@ func main() {
 			registry.SwapAuth(auth.NewServiceFromFileConfig(fc.Auth))
 		}
 
-		// Update scanner configuration
-		scannerService.UpdateConfig(buildScannerConfig(newCfg.Scanner))
+		// Update scanner configuration from DB (with env overrides)
+		newEnvCfg := configToScannerConfig(newCfg.Scanner)
+		newScannerCfg := scanDB.LoadScannerSettings(newEnvCfg)
+		scannerService.UpdateConfig(newScannerCfg)
+
+		// Toggle auto-scanner
+		if newScannerCfg.AutoScan.Enabled {
+			autoScanner.SetPollInterval(newScannerCfg.AutoScan.PollInterval)
+			if !autoScanner.IsEnabled() {
+				autoScanner.Start()
+			}
+		} else {
+			autoScanner.SetEnabled(false)
+		}
 
 		log.Println("Configuration reloaded successfully")
 	})
@@ -126,6 +167,7 @@ func main() {
 	routerOpts := &api.RouterOptions{
 		AlertMonitor:   alertMonitor,
 		ScannerService: scannerService,
+		AutoScanner:    autoScanner,
 	}
 	apiRouter := api.NewRouter(registry, manager, routerOpts)
 
@@ -135,7 +177,7 @@ func main() {
 	}
 }
 
-func buildScannerConfig(sc config.ScannerConfig) *models.ScannerConfig {
+func configToScannerConfig(sc config.ScannerConfig) *models.ScannerConfig {
 	return &models.ScannerConfig{
 		GrypeImage:     sc.GrypeImage,
 		TrivyImage:     sc.TrivyImage,
@@ -148,7 +190,13 @@ func buildScannerConfig(sc config.ScannerConfig) *models.ScannerConfig {
 			SlackWebhookURL:   sc.SlackWebhookURL,
 			OnScanComplete:    sc.NotifyOnComplete,
 			OnBulkComplete:    sc.NotifyOnBulk,
+			OnNewCVEs:         sc.NotifyOnNewCVEs,
 			MinSeverity:       models.SeverityLevel(sc.NotifyMinSeverity),
 		},
+		AutoScan: models.AutoScanConfig{
+			Enabled:      sc.AutoScanEnabled,
+			PollInterval: sc.AutoScanPollInterval,
+		},
+		ForceRescan: sc.ForceRescan,
 	}
 }
