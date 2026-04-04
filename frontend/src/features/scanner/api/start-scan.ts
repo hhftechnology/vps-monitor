@@ -11,12 +11,28 @@ export interface StartScanParams {
   scanner?: ScannerType;
 }
 
+export class RescanBlockedError extends Error {
+  lastScanId?: string;
+  lastScanAt?: number;
+  constructor(data: { message: string; last_scan_id?: string; last_scan_at?: number }) {
+    super(data.message);
+    this.name = "RescanBlockedError";
+    this.lastScanId = data.last_scan_id;
+    this.lastScanAt = data.last_scan_at;
+  }
+}
+
 export async function startScan(params: StartScanParams): Promise<ScanJob> {
   const response = await authenticatedFetch(SCAN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
+
+  if (response.status === 409) {
+    const data = await response.json();
+    throw new RescanBlockedError(data);
+  }
 
   if (!response.ok) {
     const message = await response.text();

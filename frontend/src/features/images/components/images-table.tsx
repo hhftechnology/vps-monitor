@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   DownloadIcon,
   FileTextIcon,
@@ -13,6 +14,7 @@ import { toast } from "sonner";
 import { BulkScanDialog } from "@/features/scanner/components/bulk-scan-dialog";
 import { SBOMDialog } from "@/features/scanner/components/sbom-dialog";
 import { ScanDialog } from "@/features/scanner/components/scan-dialog";
+import { useScannedImages } from "@/features/scanner/hooks/use-scan-query";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,6 +75,15 @@ function getImageDisplayName(image: ImageInfo): string {
 export function ImagesTable() {
   const { data, isLoading, error, refetch, isRefetching } = useImagesQuery();
   const removeImageMutation = useRemoveImageMutation();
+  const { data: scannedImages } = useScannedImages();
+
+  const scannedSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const img of scannedImages ?? []) {
+      set.add(`${img.image_ref}::${img.host}`);
+    }
+    return set;
+  }, [scannedImages]);
 
   const [searchText, setSearchText] = useState("");
   const [isPullDialogOpen, setIsPullDialogOpen] = useState(false);
@@ -238,18 +249,31 @@ export function ImagesTable() {
                     {!data?.readOnly && (
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                onClick={() => setScanImage(image)}
-                              >
-                                <ShieldAlertIcon className="size-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Scan image</TooltipContent>
-                          </Tooltip>
+                          {scannedSet.has(`${getImageDisplayName(image)}::${image.host}`) ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon-sm" asChild>
+                                  <Link to="/scan-history">
+                                    <ShieldCheckIcon className="size-4 text-green-500" />
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>View scan results</TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => setScanImage(image)}
+                                >
+                                  <ShieldAlertIcon className="size-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Scan image</TooltipContent>
+                            </Tooltip>
+                          )}
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ShieldAlertIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { HistoryIcon, ShieldAlertIcon, ShieldCheckIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { useStartScan, useScanJob, useCancelScan } from "../hooks/use-scan-query";
+import { RescanBlockedError } from "../api/start-scan";
 import { ScanResultsSummary } from "./scan-results-summary";
 import { ScanResultsTable } from "./scan-results-table";
 import { ScanResultsExport } from "./scan-results-export";
@@ -37,6 +39,7 @@ export function ScanDialog({ isOpen, onOpenChange, imageRef, host }: ScanDialogP
   const [scanner, setScanner] = useState<ScannerType>("grype");
   const [jobId, setJobId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const [rescanBlocked, setRescanBlocked] = useState(false);
 
   const startScanMutation = useStartScan();
   const cancelScanMutation = useCancelScan();
@@ -52,8 +55,10 @@ export function ScanDialog({ isOpen, onOpenChange, imageRef, host }: ScanDialogP
       const newJob = await startScanMutation.mutateAsync({ imageRef, host, scanner });
       setJobId(newJob.id);
       setStarted(true);
-    } catch {
-      // error handled by mutation
+    } catch (err) {
+      if (err instanceof RescanBlockedError) {
+        setRescanBlocked(true);
+      }
     }
   };
 
@@ -67,6 +72,7 @@ export function ScanDialog({ isOpen, onOpenChange, imageRef, host }: ScanDialogP
     if (!open) {
       setJobId(null);
       setStarted(false);
+      setRescanBlocked(false);
     }
     onOpenChange(open);
   };
@@ -87,7 +93,30 @@ export function ScanDialog({ isOpen, onOpenChange, imageRef, host }: ScanDialogP
           </DialogDescription>
         </DialogHeader>
 
-        {!started ? (
+        {rescanBlocked ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 rounded-md bg-muted p-4">
+              <ShieldCheckIcon className="size-5 text-green-500 shrink-0" />
+              <div>
+                <p className="font-medium">Already scanned</p>
+                <p className="text-sm text-muted-foreground">
+                  This image hasn't changed since the last scan. Pull a new version to rescan, or view existing results.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => handleClose(false)}>
+                Close
+              </Button>
+              <Button asChild>
+                <Link to="/scan-history">
+                  <HistoryIcon className="mr-2 size-4" />
+                  View Scan History
+                </Link>
+              </Button>
+            </div>
+          </div>
+        ) : !started ? (
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <div className="space-y-1">

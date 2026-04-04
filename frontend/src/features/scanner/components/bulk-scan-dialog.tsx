@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ShieldCheckIcon } from "lucide-react";
+import { ShieldCheckIcon, SkipForwardIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -175,6 +175,12 @@ export function BulkScanDialog({ isOpen, onOpenChange }: BulkScanDialogProps) {
                     )}
                   </div>
                 </div>
+                {bulkJob.jobs.filter((j) => j.error?.includes("image_unchanged")).length > 0 && (
+                  <div className="flex items-center gap-2 rounded-md bg-muted p-2 text-sm text-muted-foreground">
+                    <SkipForwardIcon className="size-4 shrink-0" />
+                    {bulkJob.jobs.filter((j) => j.error?.includes("image_unchanged")).length} images skipped (unchanged since last scan)
+                  </div>
+                )}
                 <ScanResultsSummary summary={aggregateSummary} />
               </div>
             )}
@@ -204,6 +210,8 @@ export function BulkScanDialog({ isOpen, onOpenChange }: BulkScanDialogProps) {
                               View
                             </Button>
                           </>
+                        ) : job.status === "failed" && job.error?.includes("image_unchanged") ? (
+                          <Badge variant="secondary">Skipped</Badge>
                         ) : job.status === "failed" ? (
                           <Badge variant="destructive">Failed</Badge>
                         ) : job.status === "cancelled" ? (
