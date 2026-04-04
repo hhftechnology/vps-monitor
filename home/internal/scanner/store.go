@@ -17,10 +17,12 @@ func NewScanResultStore(db *ScanDB) *ScanResultStore {
 }
 
 // Add stores a scan result in the database.
-func (s *ScanResultStore) Add(result models.ScanResult) {
+func (s *ScanResultStore) Add(result models.ScanResult) error {
 	if err := s.db.InsertResult(result); err != nil {
 		log.Printf("Failed to persist scan result: %v", err)
+		return err
 	}
+	return nil
 }
 
 // GetResults returns all scan results for a specific image on a host.

@@ -155,10 +155,11 @@ func main() {
 		if newScannerCfg.AutoScan.Enabled {
 			autoScanner.SetPollInterval(newScannerCfg.AutoScan.PollInterval)
 			if !autoScanner.IsEnabled() {
+				autoScanner.Stop()
 				autoScanner.Start()
 			}
 		} else {
-			autoScanner.SetEnabled(false)
+			autoScanner.Stop()
 		}
 
 		log.Println("Configuration reloaded successfully")

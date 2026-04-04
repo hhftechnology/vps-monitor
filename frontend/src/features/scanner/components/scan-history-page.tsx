@@ -36,7 +36,10 @@ import {
 import { useScanHistory, useScanHistoryDetail, useScannedImages } from "../hooks/use-scan-query";
 import { ScanResultsSummary } from "./scan-results-summary";
 import { ScanResultsTable } from "./scan-results-table";
-import type { HistoryQueryParams, SeverityLevel } from "../types";
+import type { HistoryQueryParams } from "../types";
+
+export const SEVERITY_OPTIONS = ["Critical", "High", "Medium", "Low", "Negligible", "Unknown"] as const;
+export type SeverityOption = typeof SEVERITY_OPTIONS[number] | "all" | "";
 
 export function ScanHistoryPage() {
   const [params, setParams] = useState<HistoryQueryParams>({
@@ -47,14 +50,14 @@ export function ScanHistoryPage() {
   });
   const [imageFilter, setImageFilter] = useState("");
   const [hostFilter, setHostFilter] = useState<string>("");
-  const [severityFilter, setSeverityFilter] = useState<string>("");
+  const [severityFilter, setSeverityFilter] = useState<SeverityOption>("");
   const [selectedScanId, setSelectedScanId] = useState<string | null>(null);
 
   const { data: historyData, isLoading } = useScanHistory({
     ...params,
     image: imageFilter || undefined,
     host: hostFilter || undefined,
-    min_severity: (severityFilter as SeverityLevel) || undefined,
+    min_severity: (severityFilter === "all" || severityFilter === "") ? undefined : severityFilter,
   });
   const { data: scannedImages } = useScannedImages();
   const { data: detailResult, isLoading: isDetailLoading } = useScanHistoryDetail(selectedScanId);
@@ -118,7 +121,7 @@ export function ScanHistoryPage() {
           </SelectContent>
         </Select>
 
-        <Select value={severityFilter} onValueChange={(v) => {
+        <Select value={severityFilter} onValueChange={(v: SeverityOption) => {
           setSeverityFilter(v === "all" ? "" : v);
           setParams((prev) => ({ ...prev, page: 1 }));
         }}>

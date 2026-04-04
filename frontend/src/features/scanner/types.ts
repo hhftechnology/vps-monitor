@@ -1,6 +1,6 @@
 export type ScannerType = "grype" | "trivy";
 export type SeverityLevel = "Critical" | "High" | "Medium" | "Low" | "Negligible" | "Unknown";
-export type ScanJobStatus = "pending" | "pulling_scanner" | "scanning" | "complete" | "failed" | "cancelled";
+export type ScanJobStatus = "pending" | "pulling_scanner" | "scanning" | "complete" | "failed" | "cancelled" | "expired";
 export type SBOMFormat = "spdx-json" | "cyclonedx-json";
 
 export interface Vulnerability {

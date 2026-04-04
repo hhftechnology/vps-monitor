@@ -240,10 +240,14 @@ func (s *ScannerService) CancelJob(id string) bool {
 		cancel()
 		s.mu.Lock()
 		if job, exists := s.jobs[id]; exists {
-			job.Status = models.ScanJobCancelled
+			if job.Status == models.ScanJobPending || job.Status == models.ScanJobPulling || job.Status == models.ScanJobScanning {
+				job.Status = models.ScanJobCancelled
+			}
 		}
 		if state, exists := s.bulkJobs[id]; exists {
-			state.job.Status = models.ScanJobCancelled
+			if state.job.Status == models.ScanJobPending || state.job.Status == models.ScanJobPulling || state.job.Status == models.ScanJobScanning {
+				state.job.Status = models.ScanJobCancelled
+			}
 		}
 		delete(s.cancels, id)
 		s.mu.Unlock()
@@ -327,7 +331,9 @@ func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cance
 		DurationMs:      completedAt.Sub(startedAt).Milliseconds(),
 	}
 
-	s.store.Add(result)
+	if err := s.store.Add(result); err != nil {
+		log.Printf("Failed to store scan result: %v", err)
+	}
 
 	s.mu.Lock()
 	job.Status = models.ScanJobComplete
@@ -540,6 +546,9 @@ func computeSummary(vulns []models.Vulnerability) models.SeveritySummary {
 	return summary
 }
 
+// meetsMinSeverity checks if the vulnerabilities meet the designated target models.SeverityLevel.
+// If minSeverity is empty or unrecognized, it intentionally falls through and returns summary.Total > 0.
+// This intentionally matches filterBySeverity in anomaly.go, potentially causing notification flooding if no threshold is set.
 func meetsMinSeverity(summary models.SeveritySummary, minSeverity models.SeverityLevel) bool {
 	switch minSeverity {
 	case models.SeverityCritical:

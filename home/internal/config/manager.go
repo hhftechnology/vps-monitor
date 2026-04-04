@@ -103,6 +103,7 @@ func NewManager() *Manager {
 		ScannerSet: os.Getenv("SCANNER_GRYPE_IMAGE") != "" ||
 			os.Getenv("SCANNER_TRIVY_IMAGE") != "" ||
 			os.Getenv("SCANNER_SYFT_IMAGE") != "" ||
+			os.Getenv("SCANNER_SYFT_ARGS") != "" ||
 			os.Getenv("SCANNER_DEFAULT") != "" ||
 			os.Getenv("SCANNER_GRYPE_ARGS") != "" ||
 			os.Getenv("SCANNER_TRIVY_ARGS") != "" ||

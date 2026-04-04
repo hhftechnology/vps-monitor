@@ -430,16 +430,36 @@ func (h *ScanHandlers) GetScanHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if v := q.Get("page"); v != "" {
-		params.Page, _ = strconv.Atoi(v)
+		val, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid page", http.StatusBadRequest)
+			return
+		}
+		params.Page = val
 	}
 	if v := q.Get("page_size"); v != "" {
-		params.PageSize, _ = strconv.Atoi(v)
+		val, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid page_size", http.StatusBadRequest)
+			return
+		}
+		params.PageSize = val
 	}
 	if v := q.Get("start_date"); v != "" {
-		params.StartDate, _ = strconv.ParseInt(v, 10, 64)
+		val, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid start_date", http.StatusBadRequest)
+			return
+		}
+		params.StartDate = val
 	}
 	if v := q.Get("end_date"); v != "" {
-		params.EndDate, _ = strconv.ParseInt(v, 10, 64)
+		val, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid end_date", http.StatusBadRequest)
+			return
+		}
+		params.EndDate = val
 	}
 
 	db := h.scanner.Store().DB()

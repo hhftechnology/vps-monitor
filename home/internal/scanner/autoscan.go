@@ -42,6 +42,10 @@ func NewAutoScanner(registry *services.Registry, scannerSvc *ScannerService, db 
 
 // Start begins event listening and polling.
 func (a *AutoScanner) Start() {
+	if a.enabled.Load() {
+		return
+	}
+	a.stopCh = make(chan struct{})
 	a.enabled.Store(true)
 	log.Println("Auto-scanner starting...")
 
@@ -324,8 +328,8 @@ func (a *AutoScanner) pollForChanges() {
 				log.Printf("Auto-scanner poll: failed to start scan for %s on %s: %v", imageRef, hostName, err)
 			}
 
-			// Update state with new image ID (scan will update last_scan_at on completion)
-			a.db.UpsertImageScanState(hostName, imageRef, imageID, 0, "")
+			// Update state with new image ID
+			a.db.UpsertImageScanState(hostName, imageRef, imageID, time.Now().Unix(), "")
 		}
 	}
 }

@@ -85,6 +85,12 @@ func computeAnomalyDiff(newVulns []models.Vulnerability) AnomalyDiff {
 	if diff.Summary.Low > 0 {
 		parts = append(parts, fmt.Sprintf("%d Low", diff.Summary.Low))
 	}
+	if diff.Summary.Negligible > 0 {
+		parts = append(parts, fmt.Sprintf("%d Negligible", diff.Summary.Negligible))
+	}
+	if diff.Summary.Unknown > 0 {
+		parts = append(parts, fmt.Sprintf("%d Unknown", diff.Summary.Unknown))
+	}
 
 	if len(parts) > 0 {
 		diff.Message = fmt.Sprintf("%d new vulnerabilities found (%s)", diff.Summary.Total, strings.Join(parts, ", "))
