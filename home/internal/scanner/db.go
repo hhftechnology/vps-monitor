@@ -330,13 +330,19 @@ func (s *ScanDB) QueryHistory(params HistoryQuery) (*HistoryPage, error) {
 		params.PageSize = 20
 	}
 
-	// Validate and default sort
-	validSorts := map[string]bool{"completed_at": true, "summary_total": true, "summary_critical": true}
-	if !validSorts[params.SortBy] {
-		params.SortBy = "completed_at"
+	// Map user input to safe column names (prevents SQL injection)
+	sortColumnMap := map[string]string{
+		"completed_at":     "completed_at",
+		"summary_total":    "summary_total",
+		"summary_critical": "summary_critical",
 	}
-	if params.SortDir != "asc" {
-		params.SortDir = "desc"
+	sortColumn := sortColumnMap[params.SortBy]
+	if sortColumn == "" {
+		sortColumn = "completed_at"
+	}
+	sortDir := "DESC"
+	if params.SortDir == "asc" {
+		sortDir = "ASC"
 	}
 
 	where, args := buildHistoryWhere(params)
@@ -351,12 +357,13 @@ func (s *ScanDB) QueryHistory(params HistoryQuery) (*HistoryPage, error) {
 	totalPages := (total + params.PageSize - 1) / params.PageSize
 	offset := (params.Page - 1) * params.PageSize
 
-	query := fmt.Sprintf(`SELECT id, image_ref, host, scanner,
-		summary_critical, summary_high, summary_medium, summary_low,
-		summary_negligible, summary_unknown, summary_total,
-		started_at, completed_at, duration_ms, error
-		FROM scan_results%s ORDER BY %s %s LIMIT ? OFFSET ?`,
-		where, params.SortBy, params.SortDir)
+	query := "SELECT id, image_ref, host, scanner," +
+		" summary_critical, summary_high, summary_medium, summary_low," +
+		" summary_negligible, summary_unknown, summary_total," +
+		" started_at, completed_at, duration_ms, error" +
+		" FROM scan_results" + where +
+		" ORDER BY " + sortColumn + " " + sortDir +
+		" LIMIT ? OFFSET ?"
 
 	args = append(args, params.PageSize, offset)
 
