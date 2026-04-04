@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -111,6 +113,13 @@ CREATE TABLE IF NOT EXISTS settings (
 
 // NewScanDB opens (or creates) the SQLite database and runs migrations.
 func NewScanDB(dbPath string) (*ScanDB, error) {
+	// Ensure the parent directory exists
+	if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create database directory %q: %w", dir, err)
+		}
+	}
+
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open scan database: %w", err)
