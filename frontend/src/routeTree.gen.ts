@@ -77,11 +77,11 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
-  '/alerts/': typeof AlertsIndexRoute
-  '/images/': typeof ImagesIndexRoute
-  '/networks/': typeof NetworksIndexRoute
-  '/scan-history/': typeof ScanHistoryIndexRoute
-  '/stats/': typeof StatsIndexRoute
+  '/alerts': typeof AlertsIndexRoute
+  '/images': typeof ImagesIndexRoute
+  '/networks': typeof NetworksIndexRoute
+  '/scan-history': typeof ScanHistoryIndexRoute
+  '/stats': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
 export interface FileRoutesByTo {
@@ -116,11 +116,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/demo/tanstack-query'
-    | '/alerts/'
-    | '/images/'
-    | '/networks/'
-    | '/scan-history/'
-    | '/stats/'
+    | '/alerts'
+    | '/images'
+    | '/networks'
+    | '/scan-history'
+    | '/stats'
     | '/containers/$containerId/logs'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -187,35 +187,35 @@ declare module '@tanstack/react-router' {
     '/stats/': {
       id: '/stats/'
       path: '/stats'
-      fullPath: '/stats/'
+      fullPath: '/stats'
       preLoaderRoute: typeof StatsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/scan-history/': {
       id: '/scan-history/'
       path: '/scan-history'
-      fullPath: '/scan-history/'
+      fullPath: '/scan-history'
       preLoaderRoute: typeof ScanHistoryIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/networks/': {
       id: '/networks/'
       path: '/networks'
-      fullPath: '/networks/'
+      fullPath: '/networks'
       preLoaderRoute: typeof NetworksIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/images/': {
       id: '/images/'
       path: '/images'
-      fullPath: '/images/'
+      fullPath: '/images'
       preLoaderRoute: typeof ImagesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/alerts/': {
       id: '/alerts/'
       path: '/alerts'
-      fullPath: '/alerts/'
+      fullPath: '/alerts'
       preLoaderRoute: typeof AlertsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }

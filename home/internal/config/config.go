@@ -188,9 +188,9 @@ func parseScannerConfig() ScannerConfig {
 		NotifyOnBulk:         true,
 		NotifyOnNewCVEs:      true,
 		NotifyMinSeverity:    "High",
-		AutoScanEnabled:      os.Getenv("SCANNER_AUTO_SCAN") == "true",
+		AutoScanEnabled:      false,
 		AutoScanPollInterval: 15,
-		ForceRescan:          os.Getenv("SCANNER_FORCE_RESCAN") == "true",
+		ForceRescan:          false,
 	}
 
 	if v := os.Getenv("SCANNER_GRYPE_IMAGE"); v != "" {
@@ -211,14 +211,30 @@ func parseScannerConfig() ScannerConfig {
 	if v := os.Getenv("SCANNER_TRIVY_ARGS"); v != "" {
 		cfg.TrivyArgs = v
 	}
-	if os.Getenv("SCANNER_NOTIFY_ON_COMPLETE") == "false" {
-		cfg.NotifyOnComplete = false
+	if v := os.Getenv("SCANNER_NOTIFY_ON_COMPLETE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.NotifyOnComplete = b
+		}
 	}
-	if os.Getenv("SCANNER_NOTIFY_ON_BULK") == "false" {
-		cfg.NotifyOnBulk = false
+	if v := os.Getenv("SCANNER_NOTIFY_ON_BULK"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.NotifyOnBulk = b
+		}
 	}
-	if os.Getenv("SCANNER_NOTIFY_ON_NEW_CVES") == "false" {
-		cfg.NotifyOnNewCVEs = false
+	if v := os.Getenv("SCANNER_NOTIFY_ON_NEW_CVES"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.NotifyOnNewCVEs = b
+		}
+	}
+	if v := os.Getenv("SCANNER_AUTO_SCAN"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.AutoScanEnabled = b
+		}
+	}
+	if v := os.Getenv("SCANNER_FORCE_RESCAN"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.ForceRescan = b
+		}
 	}
 	if v := os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY"); v != "" {
 		cfg.NotifyMinSeverity = v

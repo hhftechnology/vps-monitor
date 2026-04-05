@@ -10,7 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+
 	"github.com/google/uuid"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 )
@@ -167,61 +167,7 @@ func buildSBOMCmd(imageRef string, format models.SBOMFormat) []string {
 	return []string{imageRef, "-o", outputFormat}
 }
 
-// RunSBOMWithTrivy generates an SBOM using Trivy instead of Syft.
-func RunSBOMWithTrivy(ctx context.Context, dockerClient *client.Client, trivyImage, imageRef string, format models.SBOMFormat) ([]byte, error) {
-	outputFormat := "spdx-json"
-	if format == models.SBOMFormatCycloneDX {
-		outputFormat = "cyclonedx"
-	}
 
-	cmd := []string{"image", "--format", outputFormat, imageRef}
-
-	pullReader, err := dockerClient.ImagePull(ctx, trivyImage, image.PullOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to pull trivy image: %w", err)
-	}
-	io.Copy(io.Discard, pullReader)
-	pullReader.Close()
-
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: trivyImage,
-		Cmd:   cmd,
-	}, &container.HostConfig{
-		Binds: []string{"/var/run/docker.sock:/var/run/docker.sock"},
-	}, nil, nil, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trivy sbom container: %w", err)
-	}
-	containerID := resp.ID
-	defer dockerClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
-
-	if err := dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return nil, fmt.Errorf("failed to start trivy sbom container: %w", err)
-	}
-
-	statusCh, errCh := dockerClient.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return nil, fmt.Errorf("error waiting for trivy sbom: %w", err)
-		}
-	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			logs, _ := getContainerLogs(ctx, dockerClient, containerID)
-			return nil, fmt.Errorf("trivy sbom exited with code %d: %s", status.StatusCode, logs)
-		}
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
-	logReader, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		return nil, fmt.Errorf("failed to read trivy sbom output: %w", err)
-	}
-	defer logReader.Close()
-
-	return demuxDockerLogs(logReader)
-}
 
 // getContainerLogs is defined in grype.go, avoid redeclaration by using the existing one.
 // demuxDockerLogs is defined in grype.go, shared across the package.

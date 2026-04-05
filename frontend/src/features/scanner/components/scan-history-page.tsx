@@ -3,6 +3,8 @@ import { format } from "date-fns";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  DownloadIcon,
+  Trash2Icon,
   HistoryIcon,
   SearchIcon,
   XIcon,
@@ -33,7 +35,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { useScanHistory, useScanHistoryDetail, useScannedImages } from "../hooks/use-scan-query";
+import { useScanHistory, useScanHistoryDetail, useScannedImages, useDeleteScanHistory } from "../hooks/use-scan-query";
+import { exportScanHistory } from "../api/get-scan-history";
 import { ScanResultsSummary } from "./scan-results-summary";
 import { ScanResultsTable } from "./scan-results-table";
 import type { HistoryQueryParams } from "../types";
@@ -61,6 +64,7 @@ export function ScanHistoryPage() {
   });
   const { data: scannedImages } = useScannedImages();
   const { data: detailResult, isLoading: isDetailLoading } = useScanHistoryDetail(selectedScanId);
+  const deleteMutation = useDeleteScanHistory();
 
   const uniqueHosts = Array.from(
     new Set(scannedImages?.map((img) => img.host) ?? [])
@@ -167,18 +171,19 @@ export function ScanHistoryPage() {
                 Date {params.sort_by === "completed_at" && (params.sort_dir === "desc" ? "\u2193" : "\u2191")}
               </TableHead>
               <TableHead>Duration</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   Loading scan history...
                 </TableCell>
               </TableRow>
             ) : !historyData?.results.length ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   No scan history found
                 </TableCell>
               </TableRow>
@@ -204,6 +209,37 @@ export function ScanHistoryPage() {
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {(result.duration_ms / 1000).toFixed(1)}s
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Export CSV"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          exportScanHistory(result.id).catch((err) => {
+                            console.error("Failed to export:", err);
+                          });
+                        }}
+                      >
+                        <DownloadIcon className="size-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Delete"
+                        disabled={deleteMutation.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm("Are you sure you want to delete this scan result?")) {
+                            deleteMutation.mutate(result.id);
+                          }
+                        }}
+                      >
+                        <Trash2Icon className="size-4 text-destructive" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

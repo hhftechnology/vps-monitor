@@ -46,7 +46,36 @@ func NewScannerService(registry *services.Registry, cfg *models.ScannerConfig, d
 		cancels:  make(map[string]context.CancelFunc),
 	}
 	s.config.Store(cfg)
+	
+	go s.gcWorker()
+	
 	return s
+}
+
+func (s *ScannerService) gcWorker() {
+	ticker := time.NewTicker(1 * time.Hour)
+	for range ticker.C {
+		now := time.Now().Unix()
+		s.mu.Lock()
+		for id, job := range s.jobs {
+			if (job.Status == models.ScanJobComplete || job.Status == models.ScanJobFailed || job.Status == models.ScanJobCancelled) && (now-job.CreatedAt > 24*3600) {
+				delete(s.jobs, id)
+				delete(s.cancels, id)
+			}
+		}
+		for id, state := range s.bulkJobs {
+			if (state.job.Status == models.ScanJobComplete || state.job.Status == models.ScanJobFailed || state.job.Status == models.ScanJobCancelled) && (now-state.job.CreatedAt > 24*3600) {
+				delete(s.bulkJobs, id)
+				delete(s.cancels, id)
+			}
+		}
+		for id, job := range s.sbomJobs {
+			if (job.Status == models.ScanJobComplete || job.Status == models.ScanJobFailed || job.Status == models.ScanJobCancelled || job.Status == models.ScanJobExpired) && (now-job.CreatedAt > 24*3600) {
+				delete(s.sbomJobs, id)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
 
 // UpdateConfig updates the scanner configuration.
@@ -175,7 +204,11 @@ func (s *ScannerService) StartBulkScan(scannerType models.ScannerType, hosts []s
 func (s *ScannerService) GetJob(id string) *models.ScanJob {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.jobs[id]
+	if job, ok := s.jobs[id]; ok {
+		copyJob := *job
+		return &copyJob
+	}
+	return nil
 }
 
 // GetBulkJob returns a bulk scan job by ID.
@@ -183,7 +216,8 @@ func (s *ScannerService) GetBulkJob(id string) *models.BulkScanJob {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if state, ok := s.bulkJobs[id]; ok {
-		return state.job
+		copyJob := *state.job
+		return &copyJob
 	}
 	return nil
 }
@@ -195,7 +229,8 @@ func (s *ScannerService) GetJobs() []*models.ScanJob {
 
 	jobs := make([]*models.ScanJob, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		jobs = append(jobs, job)
+		copyJob := *job
+		jobs = append(jobs, &copyJob)
 	}
 	return jobs
 }
@@ -207,7 +242,8 @@ func (s *ScannerService) GetBulkJobs() []*models.BulkScanJob {
 
 	jobs := make([]*models.BulkScanJob, 0, len(s.bulkJobs))
 	for _, state := range s.bulkJobs {
-		jobs = append(jobs, state.job)
+		copyJob := *state.job
+		jobs = append(jobs, &copyJob)
 	}
 	return jobs
 }
@@ -260,7 +296,11 @@ func (s *ScannerService) CancelJob(id string) bool {
 func (s *ScannerService) GetSBOMJob(id string) *models.SBOMJob {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.sbomJobs[id]
+	if job, ok := s.sbomJobs[id]; ok {
+		copyJob := *job
+		return &copyJob
+	}
+	return nil
 }
 
 func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cancel context.CancelFunc) {

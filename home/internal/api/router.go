@@ -221,6 +221,7 @@ func (ar *APIRouter) registerScanRoutes(r chi.Router) {
 	r.Get("/scan/history", ar.scanHandlers.GetScanHistory)
 	r.Get("/scan/history/images", ar.scanHandlers.GetScannedImages)
 	r.Get("/scan/history/{id}", ar.scanHandlers.GetScanHistoryDetail)
+	r.Get("/scan/history/{id}/export", ar.scanHandlers.ExportScanHistory)
 
 	// Auto-scan status
 	r.Get("/scan/autoscan/status", ar.scanHandlers.GetAutoScanStatus)
@@ -233,6 +234,7 @@ func (ar *APIRouter) registerScanRoutes(r chi.Router) {
 		mutating.Post("/scan", ar.scanHandlers.StartScan)
 		mutating.Post("/scan/bulk", ar.scanHandlers.StartBulkScan)
 		mutating.Delete("/scan/jobs/{id}", ar.scanHandlers.CancelScanJob)
+		mutating.Delete("/scan/history/{id}", ar.scanHandlers.DeleteScanHistory)
 		mutating.Post("/scan/sbom", ar.scanHandlers.StartSBOMGeneration)
 	})
 }

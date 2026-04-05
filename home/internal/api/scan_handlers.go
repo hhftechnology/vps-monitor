@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -319,7 +321,7 @@ func (h *ScanHandlers) UpdateScannerConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	validScanners := map[string]bool{"grype": true, "trivy": true, "syft": true}
+	validScanners := map[string]bool{"grype": true, "trivy": true}
 	if req.DefaultScanner != "" && !validScanners[req.DefaultScanner] {
 		http.Error(w, "invalid defaultScanner", http.StatusBadRequest)
 		return
@@ -391,30 +393,6 @@ func (h *ScanHandlers) TestScanNotification(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// configToScannerConfig converts config.ScannerConfig to models.ScannerConfig
-func configToScannerConfig(cfg *config.ScannerConfig) *models.ScannerConfig {
-	return &models.ScannerConfig{
-		GrypeImage:     cfg.GrypeImage,
-		TrivyImage:     cfg.TrivyImage,
-		SyftImage:      cfg.SyftImage,
-		DefaultScanner: models.ScannerType(cfg.DefaultScanner),
-		GrypeArgs:      cfg.GrypeArgs,
-		TrivyArgs:      cfg.TrivyArgs,
-		Notifications: models.NotificationConfig{
-			DiscordWebhookURL: cfg.DiscordWebhookURL,
-			SlackWebhookURL:   cfg.SlackWebhookURL,
-			OnScanComplete:    cfg.NotifyOnComplete,
-			OnBulkComplete:    cfg.NotifyOnBulk,
-			OnNewCVEs:         cfg.NotifyOnNewCVEs,
-			MinSeverity:       models.SeverityLevel(cfg.NotifyMinSeverity),
-		},
-		AutoScan: models.AutoScanConfig{
-			Enabled:      cfg.AutoScanEnabled,
-			PollInterval: cfg.AutoScanPollInterval,
-		},
-		ForceRescan: cfg.ForceRescan,
-	}
-}
 
 // --- History Handlers ---
 
@@ -524,6 +502,70 @@ func (h *ScanHandlers) GetAutoScanStatus(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	WriteJsonResponse(w, http.StatusOK, h.autoScanner.Status())
+}
+
+// ExportScanHistory returns a scan history detail in CSV format.
+func (h *ScanHandlers) ExportScanHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing scan id", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.scanner.Store().DB().GetResultByID(id)
+	if err != nil {
+		log.Printf("Failed to map export for %s: %v", id, err)
+		http.Error(w, "failed to get scan result", http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		http.Error(w, "scan result not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment;filename=scan_%s.csv", id))
+
+	writer := csv.NewWriter(w)
+	defer writer.Flush()
+
+	// Write header
+	writer.Write([]string{"Severity", "Package", "Version", "VulnerabilityID", "Description", "DataSource"})
+
+	sanitize := func(s string) string {
+		if len(s) > 0 && (s[0] == '=' || s[0] == '+' || s[0] == '-' || s[0] == '@') {
+			return "'" + s
+		}
+		return s
+	}
+
+	for _, vuln := range result.Vulnerabilities {
+		writer.Write([]string{
+			string(vuln.Severity),
+			sanitize(vuln.Package),
+			sanitize(vuln.InstalledVersion),
+			sanitize(vuln.ID),
+			sanitize(vuln.Description),
+			sanitize(vuln.DataSource),
+		})
+	}
+}
+
+// DeleteScanHistory deletes a scan history record from the database.
+func (h *ScanHandlers) DeleteScanHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing scan id", http.StatusBadRequest)
+		return
+	}
+
+	err := h.scanner.Store().DB().DeleteScanResult(id)
+	if err != nil {
+		http.Error(w, "failed to delete scan result", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Helpers ---

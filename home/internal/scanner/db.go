@@ -286,6 +286,12 @@ func (s *ScanDB) GetResultByID(id string) (*models.ScanResult, error) {
 	return &r, nil
 }
 
+// DeleteScanResult removes a scan result and its vulnerabilities by ID.
+func (s *ScanDB) DeleteScanResult(id string) error {
+	_, err := s.db.Exec(`DELETE FROM scan_results WHERE id = ?`, id)
+	return err
+}
+
 // GetPreviousResult returns the scan result immediately before the given scan ID
 // for the same image and host.
 func (s *ScanDB) GetPreviousResult(host, imageRef, beforeID string) (*models.ScanResult, error) {

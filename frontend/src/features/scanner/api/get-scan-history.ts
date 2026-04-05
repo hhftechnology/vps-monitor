@@ -65,3 +65,35 @@ export async function getAutoScanStatus(): Promise<AutoScanStatus> {
 
   return response.json();
 }
+
+export async function deleteScanHistory(id: string): Promise<void> {
+  const response = await authenticatedFetch(`${HISTORY_ENDPOINT}/${id}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+}
+
+export async function exportScanHistory(id: string): Promise<void> {
+  const response = await authenticatedFetch(`${HISTORY_ENDPOINT}/${id}/export`, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `scan_${id}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}

@@ -15,6 +15,7 @@ import {
   getScanHistoryDetail,
   getScannedImages,
   getAutoScanStatus,
+  deleteScanHistory,
 } from "../api/get-scan-history";
 import type { ScannerConfig, HistoryQueryParams } from "../types";
 
@@ -144,5 +145,16 @@ export function useAutoScanStatus() {
     queryKey: ["autoScanStatus"],
     queryFn: getAutoScanStatus,
     staleTime: 15_000,
+  });
+}
+
+export function useDeleteScanHistory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteScanHistory(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["scanHistory"] });
+      queryClient.invalidateQueries({ queryKey: ["scannedImages"] });
+    },
   });
 }

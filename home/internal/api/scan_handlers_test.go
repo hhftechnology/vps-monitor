@@ -50,69 +50,7 @@ func chiContext(r *http.Request, params map[string]string) *http.Request {
 	return r.WithContext(ctx)
 }
 
-// ─── configToScannerConfig ────────────────────────────────────────────────────
 
-func TestConfigToScannerConfig(t *testing.T) {
-	src := &config.ScannerConfig{
-		GrypeImage:        "anchore/grype:v1",
-		TrivyImage:        "aquasec/trivy:v1",
-		SyftImage:         "anchore/syft:v1",
-		DefaultScanner:    "trivy",
-		GrypeArgs:         "--add-cpes-if-none",
-		TrivyArgs:         "--scanners vuln",
-		DiscordWebhookURL: "https://discord.example.com",
-		SlackWebhookURL:   "https://slack.example.com",
-		NotifyOnComplete:  true,
-		NotifyOnBulk:      false,
-		NotifyMinSeverity: "High",
-	}
-
-	got := configToScannerConfig(src)
-
-	if got.GrypeImage != src.GrypeImage {
-		t.Fatalf("GrypeImage: expected %q, got %q", src.GrypeImage, got.GrypeImage)
-	}
-	if got.TrivyImage != src.TrivyImage {
-		t.Fatalf("TrivyImage: expected %q, got %q", src.TrivyImage, got.TrivyImage)
-	}
-	if got.SyftImage != src.SyftImage {
-		t.Fatalf("SyftImage: expected %q, got %q", src.SyftImage, got.SyftImage)
-	}
-	if string(got.DefaultScanner) != src.DefaultScanner {
-		t.Fatalf("DefaultScanner: expected %q, got %q", src.DefaultScanner, got.DefaultScanner)
-	}
-	if got.GrypeArgs != src.GrypeArgs {
-		t.Fatalf("GrypeArgs: expected %q, got %q", src.GrypeArgs, got.GrypeArgs)
-	}
-	if got.TrivyArgs != src.TrivyArgs {
-		t.Fatalf("TrivyArgs: expected %q, got %q", src.TrivyArgs, got.TrivyArgs)
-	}
-	if got.Notifications.DiscordWebhookURL != src.DiscordWebhookURL {
-		t.Fatalf("DiscordWebhookURL: expected %q, got %q", src.DiscordWebhookURL, got.Notifications.DiscordWebhookURL)
-	}
-	if got.Notifications.SlackWebhookURL != src.SlackWebhookURL {
-		t.Fatalf("SlackWebhookURL: expected %q, got %q", src.SlackWebhookURL, got.Notifications.SlackWebhookURL)
-	}
-	if got.Notifications.OnScanComplete != src.NotifyOnComplete {
-		t.Fatalf("OnScanComplete: expected %v, got %v", src.NotifyOnComplete, got.Notifications.OnScanComplete)
-	}
-	if got.Notifications.OnBulkComplete != src.NotifyOnBulk {
-		t.Fatalf("OnBulkComplete: expected %v, got %v", src.NotifyOnBulk, got.Notifications.OnBulkComplete)
-	}
-	if string(got.Notifications.MinSeverity) != src.NotifyMinSeverity {
-		t.Fatalf("MinSeverity: expected %q, got %q", src.NotifyMinSeverity, got.Notifications.MinSeverity)
-	}
-}
-
-func TestConfigToScannerConfigZeroValue(t *testing.T) {
-	got := configToScannerConfig(&config.ScannerConfig{})
-	if got == nil {
-		t.Fatal("expected non-nil result for zero-value input")
-	}
-	if got.DefaultScanner != "" {
-		t.Fatalf("expected empty DefaultScanner, got %q", got.DefaultScanner)
-	}
-}
 
 // ─── GetScanJobs ──────────────────────────────────────────────────────────────
 
