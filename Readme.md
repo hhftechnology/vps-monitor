@@ -221,6 +221,7 @@ services:
       - "6789:6789"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
       - ./data:/data
     environment:
       - JWT_SECRET=your-secret-key-minimum-32-characters
