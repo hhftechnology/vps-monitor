@@ -81,14 +81,22 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 	}
 
 	cachedCPUMutex.Lock()
-	if cachedCPULogical == 0 {
+	needsFetch := cachedCPULogical == 0
+	cachedCPUMutex.Unlock()
+
+	if needsFetch {
 		logical, err := cpu.CountsWithContext(ctx, true)
 		physical, errPhys := cpu.CountsWithContext(ctx, false)
-		if err == nil && errPhys == nil && logical > 0 {
+		
+		cachedCPUMutex.Lock()
+		if cachedCPULogical == 0 && err == nil && errPhys == nil && logical > 0 {
 			cachedCPULogical = logical
 			cachedCPUPhysical = physical
 		}
+		cachedCPUMutex.Unlock()
 	}
+
+	cachedCPUMutex.Lock()
 	cpuLog := cachedCPULogical
 	cpuPhys := cachedCPUPhysical
 	cachedCPUMutex.Unlock()

@@ -43,7 +43,13 @@ export function ScanResultsExport({ result }: ScanResultsExportProps) {
       v.fixed_version || "",
     ]);
 
-    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = [headers, ...rows].map((row) => row.map((cell) => {
+      let str = String(cell ?? "");
+      if (/^[=+\-@\t]/.test(str)) {
+        str = "'" + str;
+      }
+      return `"${str.replace(/"/g, '""')}"`;
+    }).join(",")).join("\n");
     downloadFile(csv, `scan-${result.image_ref.replace(/[/:]/g, "_")}.csv`, "text/csv");
   };
 
@@ -65,6 +71,8 @@ export function ScanResultsExport({ result }: ScanResultsExportProps) {
       `| High | ${result.summary.high} |`,
       `| Medium | ${result.summary.medium} |`,
       `| Low | ${result.summary.low} |`,
+      `| Negligible | ${result.summary.negligible} |`,
+      `| Unknown | ${result.summary.unknown} |`,
       `| **Total** | **${result.summary.total}** |`,
       ``,
       `## Vulnerabilities`,
