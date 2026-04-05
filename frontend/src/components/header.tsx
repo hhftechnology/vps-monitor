@@ -1,5 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { ActivityIcon, BoxIcon, ImageIcon, NetworkIcon, ServerIcon } from "lucide-react";
+import { ActivityIcon, BoxIcon, HistoryIcon, ImageIcon, NetworkIcon, ServerIcon } from "lucide-react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ const navLinks = [
   { to: "/stats", label: "Stats", icon: ActivityIcon },
   { to: "/images", label: "Images", icon: ImageIcon },
   { to: "/networks", label: "Networks", icon: NetworkIcon },
+  { to: "/scan-history", label: "Scan History", icon: HistoryIcon },
 ] as const;
 
 export function Header() {

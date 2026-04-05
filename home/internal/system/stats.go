@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -37,6 +38,12 @@ type Usage struct {
 	DiskUsed      uint64  `json:"diskUsed"`
 }
 
+var (
+	cachedCPUMutex    sync.Mutex
+	cachedCPULogical  int
+	cachedCPUPhysical int
+)
+
 // Init configures gopsutil to use the host's /proc directory if mounted
 func Init() {
 	// If we are running in a container and have mounted /proc to /host/proc,
@@ -45,6 +52,7 @@ func Init() {
 		os.Setenv("HOST_PROC", "/host/proc")
 	}
 }
+
 
 func GetStats(ctx context.Context) (*SystemStats, error) {
 	hInfo, err := host.InfoWithContext(ctx)
@@ -62,7 +70,6 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 	// Note: 0 interval returns immediate value since last call, which might be 0 on first call
 	// For a dashboard, we usually want the average over the last second, but that blocks.
 	// A better approach for an API is to return the value since last call or just immediate.
-	// Let's use a very short interval for responsiveness, or 0.
 	cpuPercents, err := cpu.PercentWithContext(ctx, 0, false)
 	if err != nil {
 		return nil, err
@@ -73,15 +80,26 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 		cpuPercent = cpuPercents[0]
 	}
 
-	cpuLogical, err := cpu.CountsWithContext(ctx, true)
-	if err != nil {
-		cpuLogical = 0
+	cachedCPUMutex.Lock()
+	needsFetch := cachedCPULogical == 0
+	cachedCPUMutex.Unlock()
+
+	if needsFetch {
+		logical, err := cpu.CountsWithContext(ctx, true)
+		physical, errPhys := cpu.CountsWithContext(ctx, false)
+		
+		cachedCPUMutex.Lock()
+		if cachedCPULogical == 0 && err == nil && errPhys == nil && logical > 0 {
+			cachedCPULogical = logical
+			cachedCPUPhysical = physical
+		}
+		cachedCPUMutex.Unlock()
 	}
 
-	cpuPhysical, err := cpu.CountsWithContext(ctx, false)
-	if err != nil {
-		cpuPhysical = 0
-	}
+	cachedCPUMutex.Lock()
+	cpuLog := cachedCPULogical
+	cpuPhys := cachedCPUPhysical
+	cachedCPUMutex.Unlock()
 
 	// Get Disk Usage for root partition
 	// If running in container with /host mounted, use /host, otherwise use /
@@ -107,8 +125,8 @@ func GetStats(ctx context.Context) (*SystemStats, error) {
 			KernelVersion:   hInfo.KernelVersion,
 			Arch:            runtime.GOARCH,
 			Uptime:          hInfo.Uptime,
-			CPULogical:      cpuLogical,
-			CPUPhysical:     cpuPhysical,
+			CPULogical:      cpuLog,
+			CPUPhysical:     cpuPhys,
 		},
 		Usage: Usage{
 			CPUPercent:    cpuPercent,

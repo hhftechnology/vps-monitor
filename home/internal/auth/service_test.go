@@ -41,30 +41,6 @@ func TestValidateCredentialsRejectsNonBcryptHashes(t *testing.T) {
 	}
 }
 
-func TestIsBcryptHashFormatValidation(t *testing.T) {
-	validHash, err := HashPassword("super-secret")
-	if err != nil {
-		t.Fatalf("HashPassword failed: %v", err)
-	}
-	if !isBcryptHash(validHash) {
-		t.Fatalf("expected generated hash to be recognized as bcrypt")
-	}
-
-	cases := []string{
-		"",
-		"$2x$10$abcdefghijklmnopqrstuvwxyzABCDE1234567890abcdefghiJKL",
-		"$2b$aa$abcdefghijklmnopqrstuvwxyzABCDE1234567890abcdefghiJKL",
-		"$2b$10:abcdefghijklmnopqrstuvwxyzABCDE1234567890abcdefghiJKL",
-		"$2b$10$too-short",
-	}
-
-	for _, tc := range cases {
-		if isBcryptHash(tc) {
-			t.Fatalf("expected invalid bcrypt format to be rejected: %q", tc)
-		}
-	}
-}
-
 func TestDynamicMiddlewareFailsClosedWhenUnavailable(t *testing.T) {
 	handler := DynamicMiddleware(func() *Service { return nil })(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

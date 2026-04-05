@@ -39,12 +39,32 @@ type AlertConfig struct {
 	CheckInterval   time.Duration // How often to check thresholds
 }
 
+// ScannerConfig holds configuration for vulnerability scanning
+type ScannerConfig struct {
+	GrypeImage           string
+	TrivyImage           string
+	SyftImage            string
+	DefaultScanner       string
+	GrypeArgs            string
+	TrivyArgs            string
+	DiscordWebhookURL    string
+	SlackWebhookURL      string
+	NotifyOnComplete     bool
+	NotifyOnBulk         bool
+	NotifyOnNewCVEs      bool
+	NotifyMinSeverity    string
+	AutoScanEnabled      bool
+	AutoScanPollInterval int // minutes, default 15
+	ForceRescan          bool
+}
+
 type Config struct {
 	ReadOnly     bool
 	Hostname     string // Optional override for displayed hostname
 	DockerHosts  []DockerHost
 	CoolifyHosts []CoolifyHostConfig
 	Alerts       AlertConfig
+	Scanner      ScannerConfig
 }
 
 func NewConfig() *Config {
@@ -71,12 +91,15 @@ func NewConfig() *Config {
 		}
 	}
 
+	scannerConfig := parseScannerConfig()
+
 	return &Config{
 		ReadOnly:     isReadOnlyMode,
 		Hostname:     hostname,
 		DockerHosts:  dockerHosts,
 		CoolifyHosts: coolifyHosts,
 		Alerts:       alertConfig,
+		Scanner:      scannerConfig,
 	}
 }
 
@@ -149,6 +172,88 @@ func parseCoolifyHostConfigs() []CoolifyHostConfig {
 	}
 
 	return configs
+}
+
+func parseScannerConfig() ScannerConfig {
+	cfg := ScannerConfig{
+		GrypeImage:           "anchore/grype:v0.110.0",
+		TrivyImage:           "aquasec/trivy:0.69.3",
+		SyftImage:            "anchore/syft:v1.42.3",
+		DefaultScanner:       "grype",
+		GrypeArgs:            "",
+		TrivyArgs:            "",
+		DiscordWebhookURL:    os.Getenv("SCANNER_DISCORD_WEBHOOK_URL"),
+		SlackWebhookURL:      os.Getenv("SCANNER_SLACK_WEBHOOK_URL"),
+		NotifyOnComplete:     true,
+		NotifyOnBulk:         true,
+		NotifyOnNewCVEs:      true,
+		NotifyMinSeverity:    "High",
+		AutoScanEnabled:      false,
+		AutoScanPollInterval: 15,
+		ForceRescan:          false,
+	}
+
+	if v := os.Getenv("SCANNER_GRYPE_IMAGE"); v != "" {
+		cfg.GrypeImage = v
+	}
+	if v := os.Getenv("SCANNER_TRIVY_IMAGE"); v != "" {
+		cfg.TrivyImage = v
+	}
+	if v := os.Getenv("SCANNER_SYFT_IMAGE"); v != "" {
+		cfg.SyftImage = v
+	}
+	if v := os.Getenv("SCANNER_DEFAULT"); v != "" {
+		cfg.DefaultScanner = v
+	}
+	if v := os.Getenv("SCANNER_GRYPE_ARGS"); v != "" {
+		cfg.GrypeArgs = v
+	}
+	if v := os.Getenv("SCANNER_TRIVY_ARGS"); v != "" {
+		cfg.TrivyArgs = v
+	}
+	if v := os.Getenv("SCANNER_NOTIFY_ON_COMPLETE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.NotifyOnComplete = b
+		}
+	}
+	if v := os.Getenv("SCANNER_NOTIFY_ON_BULK"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.NotifyOnBulk = b
+		}
+	}
+	if v := os.Getenv("SCANNER_NOTIFY_ON_NEW_CVES"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.NotifyOnNewCVEs = b
+		}
+	}
+	if v := os.Getenv("SCANNER_AUTO_SCAN"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.AutoScanEnabled = b
+		}
+	}
+	if v := os.Getenv("SCANNER_FORCE_RESCAN"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.ForceRescan = b
+		}
+	}
+	if v := os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY"); v != "" {
+		cfg.NotifyMinSeverity = v
+	}
+	if v := os.Getenv("SCANNER_AUTO_SCAN_POLL_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.AutoScanPollInterval = n
+		}
+	}
+
+	if cfg.DefaultScanner != "grype" && cfg.DefaultScanner != "trivy" {
+		cfg.DefaultScanner = "grype"
+	}
+	if cfg.NotifyMinSeverity != "Low" && cfg.NotifyMinSeverity != "Medium" &&
+		cfg.NotifyMinSeverity != "High" && cfg.NotifyMinSeverity != "Critical" {
+		cfg.NotifyMinSeverity = "High"
+	}
+
+	return cfg
 }
 
 func parseDockerHosts() []DockerHost {

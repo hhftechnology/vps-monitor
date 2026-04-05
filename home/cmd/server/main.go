@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/hhftechnology/vps-monitor/internal/alerts"
 	"github.com/hhftechnology/vps-monitor/internal/api"
@@ -10,6 +11,8 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
+	"github.com/hhftechnology/vps-monitor/internal/models"
+	"github.com/hhftechnology/vps-monitor/internal/scanner"
 	"github.com/hhftechnology/vps-monitor/internal/services"
 	"github.com/hhftechnology/vps-monitor/internal/system"
 )
@@ -30,14 +33,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize auth service: %v\nPlease ensure ALL auth environment variables are set: JWT_SECRET, ADMIN_USERNAME, and ADMIN_PASSWORD.", err)
 	}
-	if authService.IsDisabled() {
+	if authService == nil || authService.IsDisabled() {
 		fc := manager.FileConfigSnapshot()
 		if fc.Auth != nil && fc.Auth.Enabled {
 			authService = auth.NewServiceFromFileConfig(fc.Auth)
 		}
 	}
 
-	if authService.IsDisabled() {
+	if authService == nil || authService.IsDisabled() {
 		log.Println("Authentication is DISABLED - no auth environment variables detected")
 		log.Println("   To enable authentication, set: JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD")
 	} else {
@@ -81,6 +84,39 @@ func main() {
 
 	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
 
+	// Scanner database
+	dbPath := "/data/scanner.db"
+	if v := os.Getenv("SCANNER_DB_PATH"); v != "" {
+		dbPath = v
+	}
+	scanDB, err := scanner.NewScanDB(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open scan database: %v", err)
+	}
+	defer scanDB.Close()
+	log.Printf("Scan database opened at %s", dbPath)
+
+	// Build initial scanner config from env, then load/merge with DB settings
+	envScannerCfg := configToScannerConfig(cfg.Scanner)
+	if err := scanDB.MigrateFromFileConfig(envScannerCfg); err != nil {
+		log.Printf("Warning: failed to migrate scanner config to DB: %v", err)
+	}
+	scannerCfg := scanDB.LoadScannerSettings(envScannerCfg)
+
+	// Scanner service
+	scannerService := scanner.NewScannerService(registry, scannerCfg, scanDB)
+	log.Printf("Vulnerability scanner ready (default: %s)", scannerCfg.DefaultScanner)
+
+	// Auto-scanner
+	autoScanner := scanner.NewAutoScanner(registry, scannerService, scanDB)
+	if scannerCfg.AutoScan.Enabled {
+		autoScanner.Start()
+		log.Println("Auto-scan is ENABLED")
+	} else {
+		log.Println("Auto-scan is DISABLED")
+	}
+	defer autoScanner.Stop()
+
 	// Hot-reload callback
 	manager.OnChange(func(newCfg *config.Config) {
 		registry.UpdateConfig(newCfg)
@@ -110,16 +146,58 @@ func main() {
 			registry.SwapAuth(auth.NewServiceFromFileConfig(fc.Auth))
 		}
 
+		// Update scanner configuration from DB (with env overrides)
+		newEnvCfg := configToScannerConfig(newCfg.Scanner)
+		newScannerCfg := scanDB.LoadScannerSettings(newEnvCfg)
+		scannerService.UpdateConfig(newScannerCfg)
+
+		// Toggle auto-scanner
+		if newScannerCfg.AutoScan.Enabled {
+			autoScanner.SetPollInterval(newScannerCfg.AutoScan.PollInterval)
+			if !autoScanner.IsEnabled() {
+				autoScanner.Stop()
+				autoScanner.Start()
+			}
+		} else {
+			autoScanner.Stop()
+		}
+
 		log.Println("Configuration reloaded successfully")
 	})
 
 	routerOpts := &api.RouterOptions{
-		AlertMonitor: alertMonitor,
+		AlertMonitor:   alertMonitor,
+		ScannerService: scannerService,
+		AutoScanner:    autoScanner,
 	}
 	apiRouter := api.NewRouter(registry, manager, routerOpts)
 
 	log.Println("Server starting on :6789")
 	if err := http.ListenAndServe(":6789", apiRouter); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
+	}
+}
+
+func configToScannerConfig(sc config.ScannerConfig) *models.ScannerConfig {
+	return &models.ScannerConfig{
+		GrypeImage:     sc.GrypeImage,
+		TrivyImage:     sc.TrivyImage,
+		SyftImage:      sc.SyftImage,
+		DefaultScanner: models.ScannerType(sc.DefaultScanner),
+		GrypeArgs:      sc.GrypeArgs,
+		TrivyArgs:      sc.TrivyArgs,
+		Notifications: models.NotificationConfig{
+			DiscordWebhookURL: sc.DiscordWebhookURL,
+			SlackWebhookURL:   sc.SlackWebhookURL,
+			OnScanComplete:    sc.NotifyOnComplete,
+			OnBulkComplete:    sc.NotifyOnBulk,
+			OnNewCVEs:         sc.NotifyOnNewCVEs,
+			MinSeverity:       models.SeverityLevel(sc.NotifyMinSeverity),
+		},
+		AutoScan: models.AutoScanConfig{
+			Enabled:      sc.AutoScanEnabled,
+			PollInterval: sc.AutoScanPollInterval,
+		},
+		ForceRescan: sc.ForceRescan,
 	}
 }

@@ -1,0 +1,395 @@
+package scanner
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/hhftechnology/vps-monitor/internal/models"
+)
+
+// Notifier sends scan result notifications to Discord and Slack.
+type Notifier struct {
+	client *http.Client
+}
+
+// NewNotifier creates a new notifier.
+func NewNotifier() *Notifier {
+	return &Notifier{
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}
+}
+
+// SendDiscord sends a scan result notification to a Discord webhook.
+func (n *Notifier) SendDiscord(webhookURL string, result *models.ScanResult, bulkJob *models.BulkScanJob) error {
+	var payload map[string]interface{}
+
+	if bulkJob != nil {
+		payload = n.buildDiscordBulkPayload(bulkJob)
+	} else if result != nil {
+		payload = n.buildDiscordScanPayload(result)
+	} else {
+		return nil
+	}
+
+	return n.sendWebhook(webhookURL, payload)
+}
+
+// SendSlack sends a scan result notification to a Slack webhook.
+func (n *Notifier) SendSlack(webhookURL string, result *models.ScanResult, bulkJob *models.BulkScanJob) error {
+	var payload map[string]interface{}
+
+	if bulkJob != nil {
+		payload = n.buildSlackBulkPayload(bulkJob)
+	} else if result != nil {
+		payload = n.buildSlackScanPayload(result)
+	} else {
+		return nil
+	}
+
+	return n.sendWebhook(webhookURL, payload)
+}
+
+// SendTestNotification sends a test notification to verify webhook configuration.
+func (n *Notifier) SendTestNotification(discordURL, slackURL string) error {
+	testResult := &models.ScanResult{
+		ImageRef: "test/image:latest",
+		Host:     "test-host",
+		Scanner:  models.ScannerGrype,
+		Summary: models.SeveritySummary{
+			Critical: 1,
+			High:     3,
+			Medium:   5,
+			Low:      2,
+			Total:    11,
+		},
+		DurationMs: 5000,
+	}
+
+	if discordURL != "" {
+		if err := n.SendDiscord(discordURL, testResult, nil); err != nil {
+			return fmt.Errorf("discord: %w", err)
+		}
+	}
+	if slackURL != "" {
+		if err := n.SendSlack(slackURL, testResult, nil); err != nil {
+			return fmt.Errorf("slack: %w", err)
+		}
+	}
+	return nil
+}
+
+func (n *Notifier) buildDiscordScanPayload(result *models.ScanResult) map[string]interface{} {
+	color := discordColor(result.Summary)
+	fields := []map[string]interface{}{
+		{"name": "Critical", "value": fmt.Sprintf("%d", result.Summary.Critical), "inline": true},
+		{"name": "High", "value": fmt.Sprintf("%d", result.Summary.High), "inline": true},
+		{"name": "Medium", "value": fmt.Sprintf("%d", result.Summary.Medium), "inline": true},
+		{"name": "Low", "value": fmt.Sprintf("%d", result.Summary.Low), "inline": true},
+		{"name": "Total", "value": fmt.Sprintf("%d", result.Summary.Total), "inline": true},
+		{"name": "Scanner", "value": string(result.Scanner), "inline": true},
+	}
+	if result.DurationMs > 0 {
+		fields = append(fields, map[string]interface{}{
+			"name": "Duration", "value": fmt.Sprintf("%.1fs", float64(result.DurationMs)/1000), "inline": true,
+		})
+	}
+
+	return map[string]interface{}{
+		"embeds": []map[string]interface{}{
+			{
+				"title":       "Vulnerability Scan Complete",
+				"description": fmt.Sprintf("**%s** on host **%s**", result.ImageRef, result.Host),
+				"color":       color,
+				"fields":      fields,
+				"footer":      map[string]string{"text": "VPS Monitor"},
+				"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+}
+
+func (n *Notifier) buildDiscordBulkPayload(bulkJob *models.BulkScanJob) map[string]interface{} {
+	description := fmt.Sprintf("Scanned **%d** images\nCompleted: **%d** | Failed: **%d**",
+		bulkJob.TotalImages, bulkJob.Completed, bulkJob.Failed)
+
+	// Aggregate severity counts across all completed scans
+	var totalSummary models.SeveritySummary
+	for _, job := range bulkJob.Jobs {
+		if job.Result != nil {
+			totalSummary.Critical += job.Result.Summary.Critical
+			totalSummary.High += job.Result.Summary.High
+			totalSummary.Medium += job.Result.Summary.Medium
+			totalSummary.Low += job.Result.Summary.Low
+			totalSummary.Total += job.Result.Summary.Total
+		}
+	}
+
+	color := discordColor(totalSummary)
+	fields := []map[string]interface{}{
+		{"name": "Critical", "value": fmt.Sprintf("%d", totalSummary.Critical), "inline": true},
+		{"name": "High", "value": fmt.Sprintf("%d", totalSummary.High), "inline": true},
+		{"name": "Medium", "value": fmt.Sprintf("%d", totalSummary.Medium), "inline": true},
+		{"name": "Low", "value": fmt.Sprintf("%d", totalSummary.Low), "inline": true},
+		{"name": "Total", "value": fmt.Sprintf("%d", totalSummary.Total), "inline": true},
+	}
+
+	return map[string]interface{}{
+		"embeds": []map[string]interface{}{
+			{
+				"title":       "Bulk Vulnerability Scan Complete",
+				"description": description,
+				"color":       color,
+				"fields":      fields,
+				"footer":      map[string]string{"text": "VPS Monitor"},
+				"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+}
+
+func (n *Notifier) buildSlackScanPayload(result *models.ScanResult) map[string]interface{} {
+	summaryText := fmt.Sprintf("Critical: %d | High: %d | Medium: %d | Low: %d | Total: %d",
+		result.Summary.Critical, result.Summary.High, result.Summary.Medium,
+		result.Summary.Low, result.Summary.Total)
+
+	return map[string]interface{}{
+		"blocks": []map[string]interface{}{
+			{
+				"type": "header",
+				"text": map[string]string{
+					"type": "plain_text",
+					"text": "Vulnerability Scan Complete",
+				},
+			},
+			{
+				"type": "section",
+				"text": map[string]string{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("*%s* on host *%s*\n\n%s", result.ImageRef, result.Host, summaryText),
+				},
+			},
+			{
+				"type": "context",
+				"elements": []map[string]string{
+					{"type": "mrkdwn", "text": fmt.Sprintf("Scanner: %s | Duration: %.1fs | VPS Monitor", result.Scanner, float64(result.DurationMs)/1000)},
+				},
+			},
+		},
+	}
+}
+
+func (n *Notifier) buildSlackBulkPayload(bulkJob *models.BulkScanJob) map[string]interface{} {
+	var totalSummary models.SeveritySummary
+	for _, job := range bulkJob.Jobs {
+		if job.Result != nil {
+			totalSummary.Critical += job.Result.Summary.Critical
+			totalSummary.High += job.Result.Summary.High
+			totalSummary.Medium += job.Result.Summary.Medium
+			totalSummary.Low += job.Result.Summary.Low
+			totalSummary.Total += job.Result.Summary.Total
+		}
+	}
+
+	summaryText := fmt.Sprintf("Critical: %d | High: %d | Medium: %d | Low: %d | Total: %d",
+		totalSummary.Critical, totalSummary.High, totalSummary.Medium,
+		totalSummary.Low, totalSummary.Total)
+
+	return map[string]interface{}{
+		"blocks": []map[string]interface{}{
+			{
+				"type": "header",
+				"text": map[string]string{
+					"type": "plain_text",
+					"text": "Bulk Vulnerability Scan Complete",
+				},
+			},
+			{
+				"type": "section",
+				"text": map[string]string{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("Scanned *%d* images | Completed: *%d* | Failed: *%d*\n\n%s",
+						bulkJob.TotalImages, bulkJob.Completed, bulkJob.Failed, summaryText),
+				},
+			},
+			{
+				"type": "context",
+				"elements": []map[string]string{
+					{"type": "mrkdwn", "text": "VPS Monitor"},
+				},
+			},
+		},
+	}
+}
+
+// SendDiscordAnomaly sends an anomaly notification to Discord.
+func (n *Notifier) SendDiscordAnomaly(webhookURL string, result *models.ScanResult, diff *AnomalyDiff) error {
+	color := discordColor(diff.Summary)
+	fields := []map[string]interface{}{
+		{"name": "New Critical", "value": fmt.Sprintf("%d", diff.Summary.Critical), "inline": true},
+		{"name": "New High", "value": fmt.Sprintf("%d", diff.Summary.High), "inline": true},
+		{"name": "New Medium", "value": fmt.Sprintf("%d", diff.Summary.Medium), "inline": true},
+		{"name": "New Low", "value": fmt.Sprintf("%d", diff.Summary.Low), "inline": true},
+		{"name": "New Total", "value": fmt.Sprintf("%d", diff.Summary.Total), "inline": true},
+		{"name": "Scanner", "value": string(result.Scanner), "inline": true},
+	}
+
+	payload := map[string]interface{}{
+		"embeds": []map[string]interface{}{
+			{
+				"title":       "New Vulnerabilities Detected",
+				"description": fmt.Sprintf("**%s** on host **%s**\n%s", result.ImageRef, result.Host, diff.Message),
+				"color":       color,
+				"fields":      fields,
+				"footer":      map[string]string{"text": "VPS Monitor - Anomaly Detection"},
+				"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+
+	return n.sendWebhook(webhookURL, payload)
+}
+
+// SendSlackAnomaly sends an anomaly notification to Slack.
+func (n *Notifier) SendSlackAnomaly(webhookURL string, result *models.ScanResult, diff *AnomalyDiff) error {
+	summaryText := fmt.Sprintf("New Critical: %d | New High: %d | New Medium: %d | New Low: %d | New Total: %d",
+		diff.Summary.Critical, diff.Summary.High, diff.Summary.Medium,
+		diff.Summary.Low, diff.Summary.Total)
+
+	payload := map[string]interface{}{
+		"blocks": []map[string]interface{}{
+			{
+				"type": "header",
+				"text": map[string]string{
+					"type": "plain_text",
+					"text": "New Vulnerabilities Detected",
+				},
+			},
+			{
+				"type": "section",
+				"text": map[string]string{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("*%s* on host *%s*\n%s\n\n%s", result.ImageRef, result.Host, diff.Message, summaryText),
+				},
+			},
+			{
+				"type": "context",
+				"elements": []map[string]string{
+					{"type": "mrkdwn", "text": fmt.Sprintf("Scanner: %s | VPS Monitor - Anomaly Detection", result.Scanner)},
+				},
+			},
+		},
+	}
+
+	return n.sendWebhook(webhookURL, payload)
+}
+
+func (n *Notifier) sendWebhook(webhookURL string, payload map[string]interface{}) error {
+	if err := validateWebhookURL(webhookURL); err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create webhook request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "VPS-Monitor/1.0")
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send webhook: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// discordColor returns the embed color based on highest severity.
+func discordColor(summary models.SeveritySummary) int {
+	if summary.Critical > 0 {
+		return 0xED4245 // Red
+	}
+	if summary.High > 0 {
+		return 0xED4245 // Red
+	}
+	if summary.Medium > 0 {
+		return 0xFFA500 // Orange
+	}
+	if summary.Low > 0 {
+		return 0xFEE75C // Yellow
+	}
+	if summary.Negligible > 0 || summary.Unknown > 0 {
+		return 0xFEE75C // Yellow - non-zero but low/unknown findings
+	}
+	return 0x57F287 // Green - truly no vulnerabilities
+}
+
+func validateWebhookURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
+	}
+
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("webhook scheme must be http or https")
+	}
+
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("invalid webhook URL host")
+	}
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		if isPrivateOrLocalIP(ip) {
+			return fmt.Errorf("webhook URL host is not allowed")
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve webhook host: %w", err)
+	}
+	if len(resolved) == 0 {
+		return fmt.Errorf("failed to resolve webhook host")
+	}
+	for _, addr := range resolved {
+		if isPrivateOrLocalIP(addr.IP) {
+			return fmt.Errorf("webhook host resolves to a private/local address")
+		}
+	}
+
+	return nil
+}
+
+func isPrivateOrLocalIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return true
+	}
+	return ip.IsPrivate()
+}

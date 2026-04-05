@@ -1,12 +1,20 @@
 import { useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   DownloadIcon,
+  FileTextIcon,
   RefreshCcwIcon,
   SearchIcon,
+  ShieldAlertIcon,
+  ShieldCheckIcon,
   Trash2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { BulkScanDialog } from "@/features/scanner/components/bulk-scan-dialog";
+import { SBOMDialog } from "@/features/scanner/components/sbom-dialog";
+import { ScanDialog } from "@/features/scanner/components/scan-dialog";
+import { useScannedImages } from "@/features/scanner/hooks/use-scan-query";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,8 +45,8 @@ import {
 } from "@/components/ui/tooltip";
 
 import { useImagesQuery, useRemoveImageMutation } from "../hooks/use-images-query";
-import { ImagePullDialog } from "./image-pull-dialog";
 import type { ImageInfo } from "../types";
+import { ImagePullDialog } from "./image-pull-dialog";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -67,6 +75,15 @@ function getImageDisplayName(image: ImageInfo): string {
 export function ImagesTable() {
   const { data, isLoading, error, refetch, isRefetching } = useImagesQuery();
   const removeImageMutation = useRemoveImageMutation();
+  const { data: scannedImages } = useScannedImages();
+
+  const scannedSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const img of scannedImages ?? []) {
+      set.add(`${img.image_ref}::${img.host}`);
+    }
+    return set;
+  }, [scannedImages]);
 
   const [searchText, setSearchText] = useState("");
   const [isPullDialogOpen, setIsPullDialogOpen] = useState(false);
@@ -75,21 +92,18 @@ export function ImagesTable() {
     image: ImageInfo;
     host: string;
   } | null>(null);
+  const [scanImage, setScanImage] = useState<ImageInfo | null>(null);
+  const [sbomImage, setSbomImage] = useState<ImageInfo | null>(null);
+  const [bulkScanOpen, setBulkScanOpen] = useState(false);
 
-  // Images already come as flat array with host field
-  const allImages = useMemo(() => {
-    if (!data?.images) return [];
-    return data.images;
-  }, [data?.images]);
+  const allImages = useMemo(() => data?.images ?? [], [data?.images]);
 
-  // Get unique hosts for pull dialog
   const hosts = useMemo(() => {
     if (!data?.images) return [];
     const uniqueHosts = new Set(data.images.map((img) => img.host));
     return Array.from(uniqueHosts);
   }, [data?.images]);
 
-  // Filter images by search
   const filteredImages = useMemo(() => {
     if (!searchText) return allImages;
     const search = searchText.toLowerCase();
@@ -149,7 +163,7 @@ export function ImagesTable() {
     <>
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <CardTitle>Docker Images</CardTitle>
             <div className="flex items-center gap-2">
               <Tooltip>
@@ -168,10 +182,16 @@ export function ImagesTable() {
                 <TooltipContent>Refresh</TooltipContent>
               </Tooltip>
               {!data?.readOnly && (
-                <Button variant="default" size="sm" onClick={openPullDialog}>
-                  <DownloadIcon className="mr-2 size-4" />
-                  Pull Image
-                </Button>
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setBulkScanOpen(true)}>
+                    <ShieldCheckIcon className="mr-2 size-4" />
+                    Scan All
+                  </Button>
+                  <Button variant="default" size="sm" onClick={openPullDialog}>
+                    <DownloadIcon className="mr-2 size-4" />
+                    Pull Image
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -198,9 +218,7 @@ export function ImagesTable() {
                   <TableHead>Host</TableHead>
                   <TableHead>Size</TableHead>
                   <TableHead>Created</TableHead>
-                  {!data?.readOnly && (
-                    <TableHead className="w-[80px]">Actions</TableHead>
-                  )}
+                  {!data?.readOnly && <TableHead className="w-[180px]">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -213,7 +231,7 @@ export function ImagesTable() {
                         </span>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="text-xs text-muted-foreground font-mono cursor-help">
+                            <span className="cursor-help font-mono text-xs text-muted-foreground">
                               {image.id.replace("sha256:", "").slice(0, 12)}
                             </span>
                           </TooltipTrigger>
@@ -230,23 +248,62 @@ export function ImagesTable() {
                     <TableCell>{formatDate(image.created)}</TableCell>
                     {!data?.readOnly && (
                       <TableCell>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() =>
-                                setImageToDelete({
-                                  image,
-                                  host: image.host,
-                                })
-                              }
-                            >
-                              <Trash2Icon className="size-4 text-destructive" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Remove image</TooltipContent>
-                        </Tooltip>
+                        <div className="flex items-center gap-1">
+                          {scannedSet.has(`${getImageDisplayName(image)}::${image.host}`) ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon-sm" asChild>
+                                  <Link to="/scan-history">
+                                    <ShieldCheckIcon className="size-4 text-green-500" />
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>View scan results</TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => setScanImage(image)}
+                                >
+                                  <ShieldAlertIcon className="size-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Scan image</TooltipContent>
+                            </Tooltip>
+                          )}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => setSbomImage(image)}
+                              >
+                                <FileTextIcon className="size-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Generate SBOM</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() =>
+                                  setImageToDelete({
+                                    image,
+                                    host: image.host,
+                                  })
+                                }
+                              >
+                                <Trash2Icon className="size-4 text-destructive" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Remove image</TooltipContent>
+                          </Tooltip>
+                        </div>
                       </TableCell>
                     )}
                   </TableRow>
@@ -264,6 +321,30 @@ export function ImagesTable() {
         selectedHosts={selectedHosts}
         onSelectedHostsChange={setSelectedHosts}
       />
+
+      <BulkScanDialog isOpen={bulkScanOpen} onOpenChange={setBulkScanOpen} />
+
+      {scanImage && (
+        <ScanDialog
+          isOpen={!!scanImage}
+          onOpenChange={(open) => {
+            if (!open) setScanImage(null);
+          }}
+          imageRef={getImageDisplayName(scanImage)}
+          host={scanImage.host}
+        />
+      )}
+
+      {sbomImage && (
+        <SBOMDialog
+          isOpen={!!sbomImage}
+          onOpenChange={(open) => {
+            if (!open) setSbomImage(null);
+          }}
+          imageRef={getImageDisplayName(sbomImage)}
+          host={sbomImage.host}
+        />
+      )}
 
       <AlertDialog
         open={!!imageToDelete}
