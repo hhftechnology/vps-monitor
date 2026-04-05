@@ -164,3 +164,266 @@ func TestValidateCoolifyHostsRejectsEmptyAPIURL(t *testing.T) {
 		t.Fatal("expected error for empty APIURL, got nil")
 	}
 }
+
+// ─── UpdateScannerConfig ──────────────────────────────────────────────────────
+
+// TestUpdateScannerConfigPersistsAndMerges verifies that UpdateScannerConfig
+// writes the file config and reflects the change in the merged config.
+func TestUpdateScannerConfigPersistsAndMerges(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	scanner := &FileScannerConfig{
+		GrypeImage:     "anchore/grype:v1.0.0",
+		DefaultScanner: "trivy",
+	}
+
+	if err := m.UpdateScannerConfig(scanner); err != nil {
+		t.Fatalf("UpdateScannerConfig returned unexpected error: %v", err)
+	}
+
+	merged := m.Config()
+	if merged.Scanner.GrypeImage != "anchore/grype:v1.0.0" {
+		t.Fatalf("expected GrypeImage 'anchore/grype:v1.0.0', got %q", merged.Scanner.GrypeImage)
+	}
+	if merged.Scanner.DefaultScanner != "trivy" {
+		t.Fatalf("expected DefaultScanner 'trivy', got %q", merged.Scanner.DefaultScanner)
+	}
+}
+
+// TestUpdateScannerConfigRollsBackOnPersistFailure verifies that when persist
+// fails the in-memory state is restored to its previous value.
+func TestUpdateScannerConfigRollsBackOnPersistFailure(t *testing.T) {
+	// Use an invalid path so persist always fails.
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    "/nonexistent/path/config.json",
+	}
+	m.merged, m.sources = m.merge()
+
+	// Record the original scanner config.
+	original := m.fileConfig.Scanner
+
+	err := m.UpdateScannerConfig(&FileScannerConfig{GrypeImage: "shouldNotPersist"})
+	if err == nil {
+		t.Fatal("expected error for invalid path, got nil")
+	}
+
+	// Verify rollback.
+	if m.fileConfig.Scanner != original {
+		t.Fatal("expected fileConfig.Scanner to be rolled back after persist failure")
+	}
+}
+
+// TestUpdateScannerConfigWithNotifications verifies that notification settings
+// are persisted and reflected in the merged config.
+func TestUpdateScannerConfigWithNotifications(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	falseVal := false
+	scanner := &FileScannerConfig{
+		Notifications: &FileNotificationConfig{
+			DiscordWebhookURL: "https://discord.example.com/hook",
+			MinSeverity:       "Critical",
+			OnScanComplete:    &falseVal,
+		},
+	}
+
+	if err := m.UpdateScannerConfig(scanner); err != nil {
+		t.Fatalf("UpdateScannerConfig returned error: %v", err)
+	}
+
+	merged := m.Config()
+	if merged.Scanner.DiscordWebhookURL != "https://discord.example.com/hook" {
+		t.Fatalf("expected discord webhook to be set, got %q", merged.Scanner.DiscordWebhookURL)
+	}
+	if merged.Scanner.NotifyMinSeverity != "Critical" {
+		t.Fatalf("expected NotifyMinSeverity 'Critical', got %q", merged.Scanner.NotifyMinSeverity)
+	}
+	if merged.Scanner.NotifyOnComplete {
+		t.Fatal("expected NotifyOnComplete=false after setting OnScanComplete=false")
+	}
+}
+
+// ─── Scanner merge ────────────────────────────────────────────────────────────
+
+// TestScannerMergeUsesEnvConfigAsBase verifies that when no file scanner config
+// is present, the merged scanner config equals the env config defaults.
+func TestScannerMergeUsesEnvConfigAsBase(t *testing.T) {
+	envCfg := NewConfig()
+	envCfg.Scanner.GrypeImage = "anchore/grype:env"
+	envCfg.Scanner.DefaultScanner = "grype"
+
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.GrypeImage != "anchore/grype:env" {
+		t.Fatalf("expected GrypeImage from env, got %q", merged.Scanner.GrypeImage)
+	}
+	if merged.Scanner.DefaultScanner != "grype" {
+		t.Fatalf("expected DefaultScanner from env, got %q", merged.Scanner.DefaultScanner)
+	}
+}
+
+// TestScannerMergeFileOverridesEnv verifies that non-empty file scanner fields
+// override env-derived scanner fields.
+func TestScannerMergeFileOverridesEnv(t *testing.T) {
+	envCfg := NewConfig()
+	envCfg.Scanner.GrypeImage = "anchore/grype:env"
+	envCfg.Scanner.TrivyImage = "aquasec/trivy:env"
+
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+		fileConfig: FileConfig{
+			Scanner: &FileScannerConfig{
+				GrypeImage: "anchore/grype:file",
+				// TrivyImage deliberately omitted - env value should persist
+			},
+		},
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.GrypeImage != "anchore/grype:file" {
+		t.Fatalf("expected file GrypeImage, got %q", merged.Scanner.GrypeImage)
+	}
+	// TrivyImage not set in file → env value preserved
+	if merged.Scanner.TrivyImage != "aquasec/trivy:env" {
+		t.Fatalf("expected env TrivyImage preserved, got %q", merged.Scanner.TrivyImage)
+	}
+}
+
+// TestScannerMergeEmptyFileFieldsDoNotOverrideEnv verifies that empty-string
+// file scanner fields do not override non-empty env-derived values.
+func TestScannerMergeEmptyFileFieldsDoNotOverrideEnv(t *testing.T) {
+	envCfg := NewConfig()
+	envCfg.Scanner.DefaultScanner = "trivy"
+
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+		fileConfig: FileConfig{
+			Scanner: &FileScannerConfig{
+				DefaultScanner: "", // empty — must not override
+			},
+		},
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.DefaultScanner != "trivy" {
+		t.Fatalf("expected empty file field to keep env value 'trivy', got %q", merged.Scanner.DefaultScanner)
+	}
+}
+
+// TestScannerMergeNotificationBoolOverride verifies that a pointer-bool
+// notification field (OnScanComplete/OnBulkComplete) in the file config
+// overrides the env default even when the value is false.
+func TestScannerMergeNotificationBoolOverride(t *testing.T) {
+	envCfg := NewConfig()
+	envCfg.Scanner.NotifyOnComplete = true // env default
+
+	falseVal := false
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+		fileConfig: FileConfig{
+			Scanner: &FileScannerConfig{
+				Notifications: &FileNotificationConfig{
+					OnScanComplete: &falseVal,
+				},
+			},
+		},
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.NotifyOnComplete {
+		t.Fatal("expected NotifyOnComplete=false from file config, got true")
+	}
+}
+
+// ─── parseScannerConfig defaults ─────────────────────────────────────────────
+
+// TestParseScannerConfigDefaults verifies that parseScannerConfig returns the
+// expected defaults when no env vars are set.
+func TestParseScannerConfigDefaults(t *testing.T) {
+	// Ensure scanner env vars are unset for this test.
+	vars := []string{
+		"SCANNER_GRYPE_IMAGE", "SCANNER_TRIVY_IMAGE", "SCANNER_SYFT_IMAGE",
+		"SCANNER_DEFAULT", "SCANNER_GRYPE_ARGS", "SCANNER_TRIVY_ARGS",
+		"SCANNER_DISCORD_WEBHOOK_URL", "SCANNER_SLACK_WEBHOOK_URL",
+		"SCANNER_NOTIFY_ON_COMPLETE", "SCANNER_NOTIFY_ON_BULK",
+		"SCANNER_NOTIFY_MIN_SEVERITY",
+	}
+	for _, v := range vars {
+		t.Setenv(v, "")
+	}
+
+	cfg := parseScannerConfig()
+
+	if cfg.GrypeImage == "" {
+		t.Fatal("expected default GrypeImage to be non-empty")
+	}
+	if cfg.TrivyImage == "" {
+		t.Fatal("expected default TrivyImage to be non-empty")
+	}
+	if cfg.SyftImage == "" {
+		t.Fatal("expected default SyftImage to be non-empty")
+	}
+	if cfg.DefaultScanner != "grype" {
+		t.Fatalf("expected default scanner 'grype', got %q", cfg.DefaultScanner)
+	}
+	if !cfg.NotifyOnComplete {
+		t.Fatal("expected NotifyOnComplete=true by default")
+	}
+	if !cfg.NotifyOnBulk {
+		t.Fatal("expected NotifyOnBulk=true by default")
+	}
+	if cfg.NotifyMinSeverity != "High" {
+		t.Fatalf("expected default NotifyMinSeverity 'High', got %q", cfg.NotifyMinSeverity)
+	}
+}
+
+// TestParseScannerConfigEnvOverrides verifies that environment variables
+// override the built-in defaults.
+func TestParseScannerConfigEnvOverrides(t *testing.T) {
+	t.Setenv("SCANNER_GRYPE_IMAGE", "anchore/grype:custom")
+	t.Setenv("SCANNER_DEFAULT", "trivy")
+	t.Setenv("SCANNER_NOTIFY_ON_COMPLETE", "false")
+	t.Setenv("SCANNER_NOTIFY_MIN_SEVERITY", "Critical")
+
+	cfg := parseScannerConfig()
+
+	if cfg.GrypeImage != "anchore/grype:custom" {
+		t.Fatalf("expected SCANNER_GRYPE_IMAGE override, got %q", cfg.GrypeImage)
+	}
+	if cfg.DefaultScanner != "trivy" {
+		t.Fatalf("expected SCANNER_DEFAULT override, got %q", cfg.DefaultScanner)
+	}
+	if cfg.NotifyOnComplete {
+		t.Fatal("expected SCANNER_NOTIFY_ON_COMPLETE=false to disable notifications")
+	}
+	if cfg.NotifyMinSeverity != "Critical" {
+		t.Fatalf("expected NotifyMinSeverity 'Critical', got %q", cfg.NotifyMinSeverity)
+	}
+}
