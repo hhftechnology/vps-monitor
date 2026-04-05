@@ -160,8 +160,12 @@ services:
       - "6789:6789"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - ./data:/data
     environment:
       - READONLY_MODE=false
+      - DOCKER_HOSTS=local=unix:///var/run/docker.sock
+      - HOSTNAME_OVERRIDE=Pangolin Host 
 ```
 
 ```bash
@@ -217,6 +221,8 @@ services:
       - "6789:6789"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - ./data:/data
     environment:
       - JWT_SECRET=your-secret-key-minimum-32-characters
       - ADMIN_USERNAME=admin
