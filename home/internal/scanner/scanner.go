@@ -114,7 +114,7 @@ func (s *ScannerService) StartScan(imageRef, host string, scannerType models.Sca
 		CreatedAt: time.Now().Unix(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), s.scanTimeout())
 
 	s.mu.Lock()
 	s.jobs[job.ID] = job
@@ -124,6 +124,40 @@ func (s *ScannerService) StartScan(imageRef, host string, scannerType models.Sca
 	go s.runScan(ctx, job, cancel)
 
 	return job, nil
+}
+
+// scanTimeout returns the configured per-scan timeout, falling back to 20 minutes.
+func (s *ScannerService) scanTimeout() time.Duration {
+	if cfg := s.Config(); cfg != nil && cfg.ScanTimeoutMinutes > 0 {
+		return time.Duration(cfg.ScanTimeoutMinutes) * time.Minute
+	}
+	return 20 * time.Minute
+}
+
+// bulkTimeout returns the configured bulk-scan timeout, falling back to 120 minutes.
+func (s *ScannerService) bulkTimeout() time.Duration {
+	if cfg := s.Config(); cfg != nil && cfg.BulkTimeoutMinutes > 0 {
+		return time.Duration(cfg.BulkTimeoutMinutes) * time.Minute
+	}
+	return 120 * time.Minute
+}
+
+// scannerLimits returns memory and pids ceilings applied to spawned scanner containers.
+func (s *ScannerService) scannerLimits() ScannerLimits {
+	memMB := 2048
+	pids := int64(512)
+	if cfg := s.Config(); cfg != nil {
+		if cfg.ScannerMemoryMB > 0 {
+			memMB = cfg.ScannerMemoryMB
+		}
+		if cfg.ScannerPidsLimit > 0 {
+			pids = int64(cfg.ScannerPidsLimit)
+		}
+	}
+	return ScannerLimits{
+		MemoryBytes: int64(memMB) * 1024 * 1024,
+		PidsLimit:   pids,
+	}
 }
 
 // StartBulkScan starts scanning all images across specified hosts.
@@ -188,7 +222,7 @@ func (s *ScannerService) StartBulkScan(scannerType models.ScannerType, hosts []s
 		return bulkJob, nil
 	}
 
-	bulkCtx, bulkCancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	bulkCtx, bulkCancel := context.WithTimeout(context.Background(), s.bulkTimeout())
 
 	s.mu.Lock()
 	s.bulkJobs[bulkJob.ID] = &bulkScanState{job: bulkJob, cancel: bulkCancel}
@@ -338,11 +372,18 @@ func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cance
 
 	s.updateJobProgress(job, models.ScanJobScanning, "Scanning...")
 
+	var bytesWritten int64
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	go s.heartbeat(hbCtx, job, &bytesWritten, time.Now())
+	defer hbCancel()
+
+	limits := s.scannerLimits()
+
 	switch job.Scanner {
 	case models.ScannerGrype:
-		vulns, err = RunGrypeScan(ctx, apiClient, cfg.GrypeImage, job.ImageRef, cfg.GrypeArgs, onProgress)
+		vulns, err = RunGrypeScan(ctx, apiClient, cfg.GrypeImage, job.ImageRef, cfg.GrypeArgs, job.ID, limits, &bytesWritten, onProgress)
 	case models.ScannerTrivy:
-		vulns, err = RunTrivyScan(ctx, apiClient, cfg.TrivyImage, job.ImageRef, cfg.TrivyArgs, onProgress)
+		vulns, err = RunTrivyScan(ctx, apiClient, cfg.TrivyImage, job.ImageRef, cfg.TrivyArgs, job.ID, limits, &bytesWritten, onProgress)
 	default:
 		err = fmt.Errorf("unknown scanner type: %s", job.Scanner)
 	}
@@ -427,7 +468,7 @@ func (s *ScannerService) runBulkScan(ctx context.Context, bulkJob *models.BulkSc
 					defer hostWg.Done()
 					defer func() { <-sem }()
 
-					jobCtx, jobCancel := context.WithTimeout(ctx, 10*time.Minute)
+					jobCtx, jobCancel := context.WithTimeout(ctx, s.scanTimeout())
 					s.runScan(jobCtx, j, jobCancel)
 
 					s.mu.Lock()
@@ -470,6 +511,43 @@ func (s *ScannerService) updateJobProgress(job *models.ScanJob, status models.Sc
 	defer s.mu.Unlock()
 	job.Status = status
 	job.Progress = progress
+}
+
+// heartbeat emits a "Scanning... Xs elapsed, Y output" progress line every 5
+// seconds using the live byte counter from the streaming writer. It exits when
+// ctx is cancelled (i.e. when the scan returns).
+func (s *ScannerService) heartbeat(ctx context.Context, job *models.ScanJob, bytesWritten *int64, started time.Time) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n := atomic.LoadInt64(bytesWritten)
+			elapsed := time.Since(started).Round(time.Second)
+			msg := fmt.Sprintf("Scanning... %s elapsed, %s output", elapsed, humanBytes(n))
+			s.mu.Lock()
+			if job.Status == models.ScanJobScanning {
+				job.Progress = msg
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+// humanBytes formats a byte count as a human-readable string.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func (s *ScannerService) sendNotification(result *models.ScanResult) {

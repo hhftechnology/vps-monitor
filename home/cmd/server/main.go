@@ -198,6 +198,10 @@ func configToScannerConfig(sc config.ScannerConfig) *models.ScannerConfig {
 			Enabled:      sc.AutoScanEnabled,
 			PollInterval: sc.AutoScanPollInterval,
 		},
-		ForceRescan: sc.ForceRescan,
+		ForceRescan:        sc.ForceRescan,
+		ScanTimeoutMinutes: sc.ScanTimeoutMinutes,
+		BulkTimeoutMinutes: sc.BulkTimeoutMinutes,
+		ScannerMemoryMB:    sc.ScannerMemoryMB,
+		ScannerPidsLimit:   sc.ScannerPidsLimit,
 	}
 }

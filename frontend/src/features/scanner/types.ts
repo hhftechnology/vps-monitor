@@ -92,6 +92,10 @@ export interface ScannerConfig {
   notifications: NotificationConfig;
   autoScan: AutoScanConfig;
   forceRescan: boolean;
+  scanTimeoutMinutes: number;
+  bulkTimeoutMinutes: number;
+  scannerMemoryMB: number;
+  scannerPidsLimit: number;
 }
 
 export interface HistoryQueryParams {

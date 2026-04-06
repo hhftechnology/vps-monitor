@@ -3,13 +3,11 @@ package scanner
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 
 	"github.com/google/uuid"
 	"github.com/hhftechnology/vps-monitor/internal/models"
@@ -39,7 +37,7 @@ func (s *ScannerService) StartSBOMGeneration(imageRef, host string, format model
 
 func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 	cfg := s.Config()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), s.scanTimeout())
 	defer cancel()
 
 	dockerClient, release := s.registry.AcquireDocker()
@@ -58,82 +56,86 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 
 	s.updateSBOMStatus(job, models.ScanJobPulling, "")
 
-	// Use Syft for SBOM generation
 	scannerImage := cfg.SyftImage
 	cmd := buildSBOMCmd(job.ImageRef, job.Format)
 
-	// Pull scanner image
-	pullReader, err := apiClient.ImagePull(ctx, scannerImage, image.PullOptions{})
-	if err != nil {
+	if err := PullImageWithProgress(ctx, apiClient, scannerImage, nil); err != nil {
 		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to pull syft image: %v", err))
 		return
 	}
-	io.Copy(io.Discard, pullReader)
-	pullReader.Close()
+
+	if err := EnsureCacheVolume(ctx, apiClient, ScannerCacheVolumes[ScannerKindSyft].Name); err != nil {
+		s.updateSBOMStatus(job, models.ScanJobFailed, err.Error())
+		return
+	}
 
 	s.updateSBOMStatus(job, models.ScanJobScanning, "")
 
-	// Create and run container
 	resp, err := apiClient.ContainerCreate(ctx, &container.Config{
 		Image: scannerImage,
 		Cmd:   cmd,
-	}, &container.HostConfig{
-		Binds: []string{"/var/run/docker.sock:/var/run/docker.sock"},
-	}, nil, nil, "")
+	}, BuildScannerHostConfig(ScannerKindSyft, s.scannerLimits()), nil, nil, "")
 	if err != nil {
 		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to create syft container: %v", err))
 		return
 	}
 	containerID := resp.ID
-	defer apiClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	defer apiClient.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
 
 	if err := apiClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to start syft container: %v", err))
 		return
 	}
 
-	// Wait for completion
+	if err := os.MkdirAll(sbomDir, 0o750); err != nil {
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to create sbom directory: %v", err))
+		return
+	}
+	filePath := filepath.Join(sbomDir, job.ID+".json")
+
+	streamDone := make(chan struct {
+		stderr string
+		err    error
+	}, 1)
+	go func() {
+		stderr, err := StreamContainerStdoutToFile(ctx, apiClient, containerID, filePath, nil)
+		streamDone <- struct {
+			stderr string
+			err    error
+		}{stderr, err}
+	}()
+
 	statusCh, errCh := apiClient.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	var exitCode int64
 	select {
 	case err := <-errCh:
 		if err != nil {
+			os.Remove(filePath)
 			s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("error waiting for syft: %v", err))
 			return
 		}
 	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			logs, _ := getContainerLogs(ctx, apiClient, containerID)
-			s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("syft exited with code %d: %s", status.StatusCode, logs))
-			return
-		}
+		exitCode = status.StatusCode
 	case <-ctx.Done():
+		os.Remove(filePath)
 		s.updateSBOMStatus(job, models.ScanJobCancelled, "cancelled")
 		return
 	}
 
-	// Read output and save to file
-	logReader, err := apiClient.ContainerLogs(ctx, containerID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to read syft output: %v", err))
+	streamResult := <-streamDone
+
+	if exitCode != 0 {
+		tail := streamResult.stderr
+		if tail == "" {
+			tail = readFilePrefix(filePath, 2*1024)
+		}
+		os.Remove(filePath)
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("syft exited with code %d: %s", exitCode, tail))
 		return
 	}
-	defer logReader.Close()
-
-	output, err := demuxDockerLogs(logReader)
-	if err != nil {
-		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to read syft output: %v", err))
-		return
-	}
-
-	// Write SBOM to file
-	if err := os.MkdirAll(sbomDir, 0750); err != nil {
-		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to create sbom directory: %v", err))
-		return
-	}
-
-	filePath := filepath.Join(sbomDir, job.ID+".json")
-	if err := os.WriteFile(filePath, output, 0600); err != nil {
-		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to write sbom file: %v", err))
+	if streamResult.err != nil {
+		os.Remove(filePath)
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to read syft output: %v", streamResult.err))
 		return
 	}
 
@@ -166,9 +168,3 @@ func buildSBOMCmd(imageRef string, format models.SBOMFormat) []string {
 	}
 	return []string{imageRef, "-o", outputFormat}
 }
-
-
-
-// getContainerLogs is defined in grype.go, avoid redeclaration by using the existing one.
-// demuxDockerLogs is defined in grype.go, shared across the package.
-// normalizeSeverity is defined in grype.go, shared across the package.

@@ -537,6 +537,10 @@ func (s *ScanDB) SaveScannerSettings(cfg *models.ScannerConfig) error {
 		{"auto_scan_enabled", boolToStr(cfg.AutoScan.Enabled)},
 		{"auto_scan_poll_interval", fmt.Sprintf("%d", cfg.AutoScan.PollInterval)},
 		{"force_rescan_enabled", boolToStr(cfg.ForceRescan)},
+		{"scan_timeout_minutes", fmt.Sprintf("%d", cfg.ScanTimeoutMinutes)},
+		{"bulk_timeout_minutes", fmt.Sprintf("%d", cfg.BulkTimeoutMinutes)},
+		{"scanner_memory_mb", fmt.Sprintf("%d", cfg.ScannerMemoryMB)},
+		{"scanner_pids_limit", fmt.Sprintf("%d", cfg.ScannerPidsLimit)},
 	}
 
 	for _, p := range pairs {
@@ -576,7 +580,11 @@ func (s *ScanDB) LoadScannerSettings(envCfg *models.ScannerConfig) *models.Scann
 			Enabled:      getSettingWithDefault(dbSettings, "auto_scan_enabled", "false") == "true",
 			PollInterval: parseIntSetting(getSettingWithDefault(dbSettings, "auto_scan_poll_interval", "15")),
 		},
-		ForceRescan: getSettingWithDefault(dbSettings, "force_rescan_enabled", "false") == "true",
+		ForceRescan:        getSettingWithDefault(dbSettings, "force_rescan_enabled", "false") == "true",
+		ScanTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "scan_timeout_minutes", "20")),
+		BulkTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "bulk_timeout_minutes", "120")),
+		ScannerMemoryMB:    parseIntSetting(getSettingWithDefault(dbSettings, "scanner_memory_mb", "2048")),
+		ScannerPidsLimit:   parseIntSetting(getSettingWithDefault(dbSettings, "scanner_pids_limit", "512")),
 	}
 
 	// Apply env overrides (non-empty env values take precedence)
@@ -607,6 +615,18 @@ func (s *ScanDB) LoadScannerSettings(envCfg *models.ScannerConfig) *models.Scann
 		}
 		if envCfg.Notifications.MinSeverity != "" {
 			cfg.Notifications.MinSeverity = envCfg.Notifications.MinSeverity
+		}
+		if envCfg.ScanTimeoutMinutes > 0 {
+			cfg.ScanTimeoutMinutes = envCfg.ScanTimeoutMinutes
+		}
+		if envCfg.BulkTimeoutMinutes > 0 {
+			cfg.BulkTimeoutMinutes = envCfg.BulkTimeoutMinutes
+		}
+		if envCfg.ScannerMemoryMB > 0 {
+			cfg.ScannerMemoryMB = envCfg.ScannerMemoryMB
+		}
+		if envCfg.ScannerPidsLimit > 0 {
+			cfg.ScannerPidsLimit = envCfg.ScannerPidsLimit
 		}
 	}
 

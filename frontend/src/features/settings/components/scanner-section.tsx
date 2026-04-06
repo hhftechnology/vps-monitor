@@ -308,6 +308,78 @@ export function ScannerSection({ disabled = false }: ScannerSectionProps) {
           </div>
         </div>
 
+        <div className="space-y-4 rounded-lg border p-4">
+          <div>
+            <h3 className="font-medium">Resource limits</h3>
+            <p className="text-sm text-muted-foreground">
+              Tune timeouts and resource ceilings for spawned scanner containers. Increase these
+              for very large images or slow networks.
+            </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="scan-timeout">Scan timeout (minutes)</Label>
+              <Input
+                id="scan-timeout"
+                type="number"
+                min={1}
+                value={draft.scanTimeoutMinutes ?? 20}
+                onChange={(e) =>
+                  setDraft({ ...draft, scanTimeoutMinutes: Number(e.target.value) || 0 })
+                }
+                disabled={busy}
+              />
+              <p className="text-xs text-muted-foreground">Per single-image scan. Default: 20.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="bulk-timeout">Bulk timeout (minutes)</Label>
+              <Input
+                id="bulk-timeout"
+                type="number"
+                min={1}
+                value={draft.bulkTimeoutMinutes ?? 120}
+                onChange={(e) =>
+                  setDraft({ ...draft, bulkTimeoutMinutes: Number(e.target.value) || 0 })
+                }
+                disabled={busy}
+              />
+              <p className="text-xs text-muted-foreground">For full host bulk scans. Default: 120.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scanner-memory">Scanner memory (MB)</Label>
+              <Input
+                id="scanner-memory"
+                type="number"
+                min={128}
+                value={draft.scannerMemoryMB ?? 2048}
+                onChange={(e) =>
+                  setDraft({ ...draft, scannerMemoryMB: Number(e.target.value) || 0 })
+                }
+                disabled={busy}
+              />
+              <p className="text-xs text-muted-foreground">
+                Memory ceiling per scanner container. Default: 2048.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scanner-pids">PID limit</Label>
+              <Input
+                id="scanner-pids"
+                type="number"
+                min={32}
+                value={draft.scannerPidsLimit ?? 512}
+                onChange={(e) =>
+                  setDraft({ ...draft, scannerPidsLimit: Number(e.target.value) || 0 })
+                }
+                disabled={busy}
+              />
+              <p className="text-xs text-muted-foreground">
+                Max processes per scanner container. Default: 512.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {disabled && (
           <p className="text-sm text-muted-foreground">
             Scanner settings are disabled while the server is in read-only mode.

@@ -115,15 +115,19 @@ type SBOMJob struct {
 
 // ScannerConfig holds scanner configuration
 type ScannerConfig struct {
-	GrypeImage     string             `json:"grypeImage"`
-	TrivyImage     string             `json:"trivyImage"`
-	SyftImage      string             `json:"syftImage"`
-	DefaultScanner ScannerType        `json:"defaultScanner"`
-	GrypeArgs      string             `json:"grypeArgs"`
-	TrivyArgs      string             `json:"trivyArgs"`
-	Notifications  NotificationConfig `json:"notifications"`
-	AutoScan       AutoScanConfig     `json:"autoScan"`
-	ForceRescan    bool               `json:"forceRescan"`
+	GrypeImage         string             `json:"grypeImage"`
+	TrivyImage         string             `json:"trivyImage"`
+	SyftImage          string             `json:"syftImage"`
+	DefaultScanner     ScannerType        `json:"defaultScanner"`
+	GrypeArgs          string             `json:"grypeArgs"`
+	TrivyArgs          string             `json:"trivyArgs"`
+	Notifications      NotificationConfig `json:"notifications"`
+	AutoScan           AutoScanConfig     `json:"autoScan"`
+	ForceRescan        bool               `json:"forceRescan"`
+	ScanTimeoutMinutes int                `json:"scanTimeoutMinutes"`
+	BulkTimeoutMinutes int                `json:"bulkTimeoutMinutes"`
+	ScannerMemoryMB    int                `json:"scannerMemoryMB"`
+	ScannerPidsLimit   int                `json:"scannerPidsLimit"`
 }
 
 // NotificationConfig holds notification webhook configuration

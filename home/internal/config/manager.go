@@ -17,13 +17,17 @@ import (
 
 // FileScannerConfig represents scanner settings stored in the config file.
 type FileScannerConfig struct {
-	GrypeImage     string                  `json:"grypeImage,omitempty"`
-	TrivyImage     string                  `json:"trivyImage,omitempty"`
-	SyftImage      string                  `json:"syftImage,omitempty"`
-	DefaultScanner string                  `json:"defaultScanner,omitempty"`
-	GrypeArgs      string                  `json:"grypeArgs,omitempty"`
-	TrivyArgs      string                  `json:"trivyArgs,omitempty"`
-	Notifications  *FileNotificationConfig `json:"notifications,omitempty"`
+	GrypeImage         string                  `json:"grypeImage,omitempty"`
+	TrivyImage         string                  `json:"trivyImage,omitempty"`
+	SyftImage          string                  `json:"syftImage,omitempty"`
+	DefaultScanner     string                  `json:"defaultScanner,omitempty"`
+	GrypeArgs          string                  `json:"grypeArgs,omitempty"`
+	TrivyArgs          string                  `json:"trivyArgs,omitempty"`
+	Notifications      *FileNotificationConfig `json:"notifications,omitempty"`
+	ScanTimeoutMinutes *int                    `json:"scanTimeoutMinutes,omitempty"`
+	BulkTimeoutMinutes *int                    `json:"bulkTimeoutMinutes,omitempty"`
+	ScannerMemoryMB    *int                    `json:"scannerMemoryMB,omitempty"`
+	ScannerPidsLimit   *int                    `json:"scannerPidsLimit,omitempty"`
 }
 
 // FileNotificationConfig represents notification settings stored in the config file.
@@ -115,7 +119,11 @@ func NewManager() *Manager {
 			os.Getenv("SCANNER_NOTIFY_MIN_SEVERITY") != "" ||
 			os.Getenv("SCANNER_AUTO_SCAN") != "" ||
 			os.Getenv("SCANNER_AUTO_SCAN_POLL_INTERVAL") != "" ||
-			os.Getenv("SCANNER_FORCE_RESCAN") != "",
+			os.Getenv("SCANNER_FORCE_RESCAN") != "" ||
+			os.Getenv("SCANNER_TIMEOUT_MINUTES") != "" ||
+			os.Getenv("SCANNER_BULK_TIMEOUT_MINUTES") != "" ||
+			os.Getenv("SCANNER_MEMORY_MB") != "" ||
+			os.Getenv("SCANNER_PIDS_LIMIT") != "",
 	}
 
 	// Load env-based config using existing parsers.
@@ -504,6 +512,18 @@ func (m *Manager) merge() (*Config, ConfigSources) {
 			if fc.Notifications.MinSeverity != "" {
 				cfg.Scanner.NotifyMinSeverity = fc.Notifications.MinSeverity
 			}
+		}
+		if fc.ScanTimeoutMinutes != nil && *fc.ScanTimeoutMinutes > 0 {
+			cfg.Scanner.ScanTimeoutMinutes = *fc.ScanTimeoutMinutes
+		}
+		if fc.BulkTimeoutMinutes != nil && *fc.BulkTimeoutMinutes > 0 {
+			cfg.Scanner.BulkTimeoutMinutes = *fc.BulkTimeoutMinutes
+		}
+		if fc.ScannerMemoryMB != nil && *fc.ScannerMemoryMB > 0 {
+			cfg.Scanner.ScannerMemoryMB = *fc.ScannerMemoryMB
+		}
+		if fc.ScannerPidsLimit != nil && *fc.ScannerPidsLimit > 0 {
+			cfg.Scanner.ScannerPidsLimit = *fc.ScannerPidsLimit
 		}
 	}
 

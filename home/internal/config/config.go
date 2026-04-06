@@ -56,6 +56,10 @@ type ScannerConfig struct {
 	AutoScanEnabled      bool
 	AutoScanPollInterval int // minutes, default 15
 	ForceRescan          bool
+	ScanTimeoutMinutes   int // default 20
+	BulkTimeoutMinutes   int // default 120
+	ScannerMemoryMB      int // default 2048
+	ScannerPidsLimit     int // default 512
 }
 
 type Config struct {
@@ -191,6 +195,10 @@ func parseScannerConfig() ScannerConfig {
 		AutoScanEnabled:      false,
 		AutoScanPollInterval: 15,
 		ForceRescan:          false,
+		ScanTimeoutMinutes:   20,
+		BulkTimeoutMinutes:   120,
+		ScannerMemoryMB:      2048,
+		ScannerPidsLimit:     512,
 	}
 
 	if v := os.Getenv("SCANNER_GRYPE_IMAGE"); v != "" {
@@ -242,6 +250,26 @@ func parseScannerConfig() ScannerConfig {
 	if v := os.Getenv("SCANNER_AUTO_SCAN_POLL_INTERVAL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.AutoScanPollInterval = n
+		}
+	}
+	if v := os.Getenv("SCANNER_TIMEOUT_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.ScanTimeoutMinutes = n
+		}
+	}
+	if v := os.Getenv("SCANNER_BULK_TIMEOUT_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.BulkTimeoutMinutes = n
+		}
+	}
+	if v := os.Getenv("SCANNER_MEMORY_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.ScannerMemoryMB = n
+		}
+	}
+	if v := os.Getenv("SCANNER_PIDS_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.ScannerPidsLimit = n
 		}
 	}
 
