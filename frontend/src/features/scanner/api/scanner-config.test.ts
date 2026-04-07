@@ -39,6 +39,12 @@ const sampleConfig = {
     onBulkComplete: true,
     minSeverity: "High" as const,
   },
+  autoScan: { enabled: false, pollInterval: 15 },
+  forceRescan: false,
+  scanTimeoutMinutes: 20,
+  bulkTimeoutMinutes: 120,
+  scannerMemoryMB: 2048,
+  scannerPidsLimit: 512,
 };
 
 describe("getScannerConfig", () => {
@@ -84,6 +90,72 @@ describe("updateScannerConfig", () => {
     mockFetch.mockResolvedValueOnce(errResponse(400, "invalid config"));
 
     await expect(updateScannerConfig(sampleConfig)).rejects.toThrow("invalid config");
+  });
+});
+
+describe("updateScannerConfig – resource limit fields", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("includes scanTimeoutMinutes in the PUT body", async () => {
+    const cfg = { ...sampleConfig, scanTimeoutMinutes: 45 };
+    mockFetch.mockResolvedValueOnce(okResponse({ config: cfg }));
+
+    await updateScannerConfig(cfg);
+
+    const [, opts] = mockFetch.mock.calls[0];
+    const body = JSON.parse(opts?.body as string);
+    expect(body.scanTimeoutMinutes).toBe(45);
+  });
+
+  it("includes bulkTimeoutMinutes in the PUT body", async () => {
+    const cfg = { ...sampleConfig, bulkTimeoutMinutes: 240 };
+    mockFetch.mockResolvedValueOnce(okResponse({ config: cfg }));
+
+    await updateScannerConfig(cfg);
+
+    const [, opts] = mockFetch.mock.calls[0];
+    const body = JSON.parse(opts?.body as string);
+    expect(body.bulkTimeoutMinutes).toBe(240);
+  });
+
+  it("includes scannerMemoryMB in the PUT body", async () => {
+    const cfg = { ...sampleConfig, scannerMemoryMB: 4096 };
+    mockFetch.mockResolvedValueOnce(okResponse({ config: cfg }));
+
+    await updateScannerConfig(cfg);
+
+    const [, opts] = mockFetch.mock.calls[0];
+    const body = JSON.parse(opts?.body as string);
+    expect(body.scannerMemoryMB).toBe(4096);
+  });
+
+  it("includes scannerPidsLimit in the PUT body", async () => {
+    const cfg = { ...sampleConfig, scannerPidsLimit: 1024 };
+    mockFetch.mockResolvedValueOnce(okResponse({ config: cfg }));
+
+    await updateScannerConfig(cfg);
+
+    const [, opts] = mockFetch.mock.calls[0];
+    const body = JSON.parse(opts?.body as string);
+    expect(body.scannerPidsLimit).toBe(1024);
+  });
+
+  it("returns the resource limit values echoed back by the server", async () => {
+    const cfg = {
+      ...sampleConfig,
+      scanTimeoutMinutes: 30,
+      bulkTimeoutMinutes: 90,
+      scannerMemoryMB: 1024,
+      scannerPidsLimit: 256,
+    };
+    mockFetch.mockResolvedValueOnce(okResponse({ config: cfg }));
+
+    const result = await updateScannerConfig(cfg);
+
+    expect(result.scanTimeoutMinutes).toBe(30);
+    expect(result.bulkTimeoutMinutes).toBe(90);
+    expect(result.scannerMemoryMB).toBe(1024);
+    expect(result.scannerPidsLimit).toBe(256);
   });
 });
 
