@@ -1,4 +1,12 @@
 <div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="/.github/logotype-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="/.github/logotype-light.png">
+    <img src="/.github/logotype-dark.png" width="400" alt="VPS Monitor">
+  </picture>
+</div>
+
+<div align="center">
     <h1>VPS-Monitor</h1>
     <p>VPS-Monitor is an open-source, high-performance Docker container monitoring and management tool. Built for speed and ease of use, it provides real-time log streaming, container stats, image management, network visualization, alerting, and multi-host support through a clean, modern interface.</p>
 
@@ -6,6 +14,11 @@
 ![Stars](https://img.shields.io/github/stars/hhftechnology/vps-monitor?style=flat-square)
 [![Discord](https://img.shields.io/discord/994247717368909884?logo=discord&style=flat-square)](https://discord.gg/HDCt9MjyMJ)
 </div>
+
+<div align="center">
+<a href="https://apps.apple.com/us/app/#"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=com.vps.monitor.mobile"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
+</div>
+
 
 <img width="1735" height="1058" alt="image" src="https://github.com/user-attachments/assets/35241a4e-d523-40eb-9455-ed33ab837b66" />
 
@@ -155,7 +168,7 @@ See the [Multi-Host Setup Guide](./multi-host.md) for detailed configuration.
 ```yaml
 services:
   vps-monitor:
-    image: ghcr.io/hhftechnology/vps-monitor:latest
+    image: hhftechnology/vps-monitor:latest
     ports:
       - "6789:6789"
     volumes:
@@ -216,7 +229,7 @@ For the full mobile validation flow, see:
 ```yaml
 services:
   vps-monitor:
-    image: ghcr.io/hhftechnology/vps-monitor:latest
+    image: hhftechnology/vps-monitor:latest
     ports:
       - "6789:6789"
     volumes:
@@ -275,7 +288,7 @@ npm run build
 ### Using Docker
 
 ```bash
-docker pull ghcr.io/hhftechnology/vps-monitor:latest
+docker pull hhftechnology/vps-monitor:latest
 docker run -d -p 6789:6789 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/hhftechnology/vps-monitor:latest
 ```
 
