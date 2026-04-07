@@ -133,7 +133,12 @@ func RunGrypeScan(
 		return nil, fmt.Errorf("open grype output: %w", err)
 	}
 	defer f.Close()
-	return parseGrypeOutputStream(f)
+
+	vulns, err := parseGrypeOutputStream(f)
+	if err != nil {
+		return nil, enrichParseErrorForEmptyOutput("grype", outPath, streamResult.stderr, err)
+	}
+	return vulns, nil
 }
 
 // buildGrypeCmd constructs the command for Grype.

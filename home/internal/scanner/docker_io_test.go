@@ -5,11 +5,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // buildDockerLogStream constructs a multiplexed Docker log stream from a list
@@ -27,6 +29,17 @@ func buildDockerLogStream(frames []struct {
 		buf.Write(f.data)
 	}
 	return buf.Bytes()
+}
+
+func writeDockerLogFrame(w io.Writer, stream byte, data []byte) error {
+	header := make([]byte, 8)
+	header[0] = stream
+	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	_, err := w.Write(data)
+	return err
 }
 
 func TestStreamLogs_Demux(t *testing.T) {
@@ -115,6 +128,94 @@ func TestParseTrivyOutputStream_Large(t *testing.T) {
 	}
 	if len(vulns) != N {
 		t.Errorf("got %d vulns, want %d", len(vulns), N)
+	}
+}
+
+func TestStreamLogs_DelayedFrames(t *testing.T) {
+	pr, pw := io.Pipe()
+	outPath := filepath.Join(t.TempDir(), "delayed.txt")
+
+	done := make(chan struct {
+		tail string
+		err  error
+	}, 1)
+	go func() {
+		tail, err := streamLogs(pr, outPath, nil)
+		done <- struct {
+			tail string
+			err  error
+		}{tail: tail, err: err}
+	}()
+
+	go func() {
+		defer pw.Close()
+		_ = writeDockerLogFrame(pw, 1, []byte("hello"))
+		time.Sleep(20 * time.Millisecond)
+		_ = writeDockerLogFrame(pw, 2, []byte("warn\n"))
+		time.Sleep(20 * time.Millisecond)
+		_ = writeDockerLogFrame(pw, 1, []byte(" world"))
+	}()
+
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("streamLogs: %v", result.err)
+	}
+	if !strings.Contains(result.tail, "warn") {
+		t.Fatalf("stderr tail mismatch: %q", result.tail)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read out: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Fatalf("stdout mismatch: got %q", got)
+	}
+}
+
+func TestScannerContainerLogsOptions(t *testing.T) {
+	opts := scannerContainerLogsOptions()
+	if !opts.ShowStdout || !opts.ShowStderr || !opts.Follow {
+		t.Fatalf("unexpected logs options: %+v", opts)
+	}
+}
+
+func TestEnrichParseErrorForEmptyOutputEOF(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "empty.json")
+	if err := os.WriteFile(outPath, nil, 0o600); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
+
+	parseErr := fmt.Errorf("failed to parse grype output: %w", io.EOF)
+	err := enrichParseErrorForEmptyOutput("grype", outPath, "line1\nline2", parseErr)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "empty grype output") {
+		t.Fatalf("expected empty output message, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "stderr tail: line1 line2") {
+		t.Fatalf("expected stderr tail in message, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("expected EOF in message, got %q", err)
+	}
+}
+
+func TestEnrichParseErrorForEmptyOutput_SkipsNonEOFOrNonEmpty(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "non-empty.json")
+	if err := os.WriteFile(outPath, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	parseErr := fmt.Errorf("failed to parse grype output: invalid character")
+	if got := enrichParseErrorForEmptyOutput("grype", outPath, "stderr", parseErr); got != parseErr {
+		t.Fatalf("expected same error for non-EOF parse error")
+	}
+
+	eofErr := fmt.Errorf("failed to parse grype output: %w", io.EOF)
+	if got := enrichParseErrorForEmptyOutput("grype", outPath, "stderr", eofErr); got != eofErr {
+		t.Fatalf("expected same error for non-empty output")
 	}
 }
 

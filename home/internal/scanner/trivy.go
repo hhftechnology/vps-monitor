@@ -124,7 +124,12 @@ func RunTrivyScan(
 		return nil, fmt.Errorf("open trivy output: %w", err)
 	}
 	defer f.Close()
-	return parseTrivyOutputStream(f)
+
+	vulns, err := parseTrivyOutputStream(f)
+	if err != nil {
+		return nil, enrichParseErrorForEmptyOutput("trivy", outPath, streamResult.stderr, err)
+	}
+	return vulns, nil
 }
 
 // buildTrivyCmd constructs the command for Trivy.

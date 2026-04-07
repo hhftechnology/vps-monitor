@@ -201,20 +201,44 @@ func streamLogs(rc io.Reader, outPath string, bytes *int64) (string, error) {
 	return stderrTail.String(), nil
 }
 
-// StreamContainerStdoutToFile streams a container's logs (after it has finished)
-// into outPath, returning the captured stderr tail. Stdout is written byte-for-byte
-// to disk so that downstream parsers can stream-decode without buffering the whole
-// output in memory.
-func StreamContainerStdoutToFile(ctx context.Context, dockerClient *client.Client, containerID, outPath string, bytes *int64) (string, error) {
-	logs, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{
+func scannerContainerLogsOptions() container.LogsOptions {
+	return container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
-	})
+		Follow:     true,
+	}
+}
+
+// StreamContainerStdoutToFile streams a container's logs into outPath, returning
+// the captured stderr tail. Stdout is written byte-for-byte to disk so downstream
+// parsers can stream-decode without buffering the whole output in memory.
+func StreamContainerStdoutToFile(ctx context.Context, dockerClient *client.Client, containerID, outPath string, bytes *int64) (string, error) {
+	logs, err := dockerClient.ContainerLogs(ctx, containerID, scannerContainerLogsOptions())
 	if err != nil {
 		return "", fmt.Errorf("container logs: %w", err)
 	}
 	defer logs.Close()
 	return streamLogs(logs, outPath, bytes)
+}
+
+func enrichParseErrorForEmptyOutput(scannerName, outPath, stderrTail string, parseErr error) error {
+	if !errors.Is(parseErr, io.EOF) {
+		return parseErr
+	}
+
+	info, err := os.Stat(outPath)
+	if err != nil || info.Size() > 0 {
+		return parseErr
+	}
+
+	tail := strings.Join(strings.Fields(stderrTail), " ")
+	if len(tail) > 512 {
+		tail = tail[:512]
+	}
+	if tail == "" {
+		return fmt.Errorf("%w (empty %s output)", parseErr, scannerName)
+	}
+	return fmt.Errorf("%w (empty %s output; stderr tail: %s)", parseErr, scannerName, tail)
 }
 
 // TempScanFile returns the on-disk path used for streaming a scanner's stdout.
