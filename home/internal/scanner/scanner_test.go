@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -424,5 +425,37 @@ func TestHeartbeatDoesNotOverwriteNonScanningStatus(t *testing.T) {
 	s.mu.Unlock()
 	if progress != "original" {
 		t.Fatalf("expected progress to remain 'original', got %q", progress)
+	}
+}
+
+// ─── classifyScanFailure ──────────────────────────────────────────────────────
+
+func TestClassifyScanFailureDeadlineExceededIsFailed(t *testing.T) {
+	status, msg := classifyScanFailure(context.DeadlineExceeded, errors.New("scan runner error"))
+	if status != models.ScanJobFailed {
+		t.Fatalf("expected status %q, got %q", models.ScanJobFailed, status)
+	}
+	if msg != "scan timed out" {
+		t.Fatalf("expected timeout message, got %q", msg)
+	}
+}
+
+func TestClassifyScanFailureCanceledIsCancelled(t *testing.T) {
+	status, msg := classifyScanFailure(context.Canceled, errors.New("scan runner error"))
+	if status != models.ScanJobCancelled {
+		t.Fatalf("expected status %q, got %q", models.ScanJobCancelled, status)
+	}
+	if msg != "scan cancelled" {
+		t.Fatalf("expected cancellation message, got %q", msg)
+	}
+}
+
+func TestClassifyScanFailureNoContextUsesScanError(t *testing.T) {
+	status, msg := classifyScanFailure(nil, errors.New("scanner exploded"))
+	if status != models.ScanJobFailed {
+		t.Fatalf("expected status %q, got %q", models.ScanJobFailed, status)
+	}
+	if msg != "scanner exploded" {
+		t.Fatalf("expected scanner error message, got %q", msg)
 	}
 }

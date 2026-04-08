@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -46,9 +47,9 @@ func NewScannerService(registry *services.Registry, cfg *models.ScannerConfig, d
 		cancels:  make(map[string]context.CancelFunc),
 	}
 	s.config.Store(cfg)
-	
+
 	go s.gcWorker()
-	
+
 	return s
 }
 
@@ -391,11 +392,8 @@ func (s *ScannerService) runScan(ctx context.Context, job *models.ScanJob, cance
 	completedAt := time.Now()
 
 	if err != nil {
-		if ctx.Err() != nil {
-			s.updateJobStatus(job, models.ScanJobCancelled, "scan cancelled")
-		} else {
-			s.updateJobStatus(job, models.ScanJobFailed, err.Error())
-		}
+		status, message := classifyScanFailure(ctx.Err(), err)
+		s.updateJobStatus(job, status, message)
 		return
 	}
 
@@ -646,6 +644,19 @@ func (s *ScannerService) sendBulkNotification(bulkJob *models.BulkScanJob) {
 			log.Printf("Failed to send Slack bulk notification: %v", err)
 		}
 	}
+}
+
+func classifyScanFailure(ctxErr, scanErr error) (models.ScanJobStatus, string) {
+	if ctxErr != nil {
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			return models.ScanJobFailed, "scan timed out"
+		}
+		return models.ScanJobCancelled, "scan cancelled"
+	}
+	if scanErr == nil {
+		return models.ScanJobFailed, "scan failed"
+	}
+	return models.ScanJobFailed, scanErr.Error()
 }
 
 func computeSummary(vulns []models.Vulnerability) models.SeveritySummary {

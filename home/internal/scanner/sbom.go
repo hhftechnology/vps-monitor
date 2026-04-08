@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -14,6 +15,11 @@ import (
 )
 
 const sbomDir = "/data/sbom"
+
+type syftStreamResult struct {
+	stderr string
+	err    error
+}
 
 // StartSBOMGeneration starts SBOM generation for an image.
 func (s *ScannerService) StartSBOMGeneration(imageRef, host string, format models.SBOMFormat) (*models.SBOMJob, error) {
@@ -93,44 +99,45 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 	}
 	filePath := filepath.Join(sbomDir, job.ID+".json")
 
-	streamDone := make(chan struct {
-		stderr string
-		err    error
-	}, 1)
+	streamDone := make(chan syftStreamResult, 1)
 	go func() {
 		stderr, err := StreamContainerStdoutToFile(ctx, apiClient, containerID, filePath, nil)
-		streamDone <- struct {
-			stderr string
-			err    error
-		}{stderr, err}
+		streamDone <- syftStreamResult{stderr: stderr, err: err}
 	}()
 
 	statusCh, errCh := apiClient.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 	var exitCode int64
-	select {
-	case err := <-errCh:
-		if err != nil {
+	var streamResult syftStreamResult
+	waitStatusCh := statusCh
+	waitErrCh := errCh
+	waitStreamCh := streamDone
+
+	for waitStatusCh != nil || waitErrCh != nil || waitStreamCh != nil {
+		select {
+		case err := <-waitErrCh:
+			waitErrCh = nil
+			waitStatusCh = nil
+			if err != nil {
+				os.Remove(filePath)
+				s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("error waiting for syft: %v", err))
+				return
+			}
+		case status := <-waitStatusCh:
+			waitStatusCh = nil
+			waitErrCh = nil
+			exitCode = status.StatusCode
+		case streamResult = <-waitStreamCh:
+			waitStreamCh = nil
+			if streamCause := syftStreamFailureCause(streamResult); streamCause != nil {
+				os.Remove(filePath)
+				s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("error streaming syft output: %v", streamCause))
+				return
+			}
+		case <-ctx.Done():
 			os.Remove(filePath)
-			s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("error waiting for syft: %v", err))
+			s.updateSBOMStatus(job, models.ScanJobCancelled, "cancelled")
 			return
 		}
-	case status := <-statusCh:
-		exitCode = status.StatusCode
-	case <-ctx.Done():
-		os.Remove(filePath)
-		s.updateSBOMStatus(job, models.ScanJobCancelled, "cancelled")
-		return
-	}
-
-	streamResult := <-streamDone
-
-	// Surface stream errors as the primary cause before falling through to the
-	// exit-code branch — otherwise a broken Docker log stream gets reported
-	// only as "syft exited with code N" and the real failure is lost.
-	if streamResult.err != nil {
-		os.Remove(filePath)
-		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to read syft output: %v", streamResult.err))
-		return
 	}
 
 	if exitCode != 0 {
@@ -171,4 +178,14 @@ func buildSBOMCmd(imageRef string, format models.SBOMFormat) []string {
 		outputFormat = "cyclonedx-json"
 	}
 	return []string{imageRef, "-o", outputFormat}
+}
+
+func syftStreamFailureCause(result syftStreamResult) any {
+	if result.err != nil {
+		return result.err
+	}
+	if stderr := strings.TrimSpace(result.stderr); stderr != "" {
+		return stderr
+	}
+	return nil
 }
