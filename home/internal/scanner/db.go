@@ -92,6 +92,7 @@ type SBOMedImage struct {
 type ImageSBOMState struct {
 	Host       string `json:"host"`
 	ImageRef   string `json:"image_ref"`
+	Format     string `json:"format"`
 	ImageID    string `json:"image_id"`
 	LastSBOMAt int64  `json:"last_sbom_at"`
 	LastSBOMID string `json:"last_sbom_id"`
@@ -176,10 +177,11 @@ CREATE INDEX IF NOT EXISTS idx_sbomc_result ON sbom_components(sbom_result_id);
 CREATE TABLE IF NOT EXISTS image_sbom_state (
     host         TEXT NOT NULL,
     image_ref    TEXT NOT NULL,
+    format       TEXT NOT NULL DEFAULT '',
     image_id     TEXT NOT NULL,
     last_sbom_at INTEGER NOT NULL DEFAULT 0,
     last_sbom_id TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (host, image_ref)
+    PRIMARY KEY (host, image_ref, format)
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -198,7 +200,7 @@ func NewScanDB(dbPath string) (*ScanDB, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open scan database: %w", err)
 	}
@@ -206,7 +208,6 @@ func NewScanDB(dbPath string) (*ScanDB, error) {
 	// Set PRAGMAs for performance and correctness
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA foreign_keys=ON",
 		"PRAGMA busy_timeout=5000",
 	}
 	for _, p := range pragmas {
@@ -221,12 +222,83 @@ func NewScanDB(dbPath string) (*ScanDB, error) {
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
-	return &ScanDB{db: db}, nil
+	scanDB := &ScanDB{db: db}
+	if err := scanDB.migrateImageSBOMStateTable(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate image_sbom_state table: %w", err)
+	}
+
+	return scanDB, nil
 }
 
 // Close closes the database connection.
 func (s *ScanDB) Close() error {
 	return s.db.Close()
+}
+
+func (s *ScanDB) migrateImageSBOMStateTable() error {
+	rows, err := s.db.Query(`PRAGMA table_info(image_sbom_state)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasFormat := false
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return err
+		}
+		if name == "format" {
+			hasFormat = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasFormat {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`CREATE TABLE image_sbom_state_new (
+		host         TEXT NOT NULL,
+		image_ref    TEXT NOT NULL,
+		format       TEXT NOT NULL DEFAULT '',
+		image_id     TEXT NOT NULL,
+		last_sbom_at INTEGER NOT NULL DEFAULT 0,
+		last_sbom_id TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (host, image_ref, format)
+	)`); err != nil {
+		return fmt.Errorf("create image_sbom_state_new: %w", err)
+	}
+
+	if _, err := tx.Exec(`INSERT INTO image_sbom_state_new (host, image_ref, format, image_id, last_sbom_at, last_sbom_id)
+		SELECT host, image_ref, '', image_id, last_sbom_at, last_sbom_id
+		FROM image_sbom_state`); err != nil {
+		return fmt.Errorf("copy image_sbom_state rows: %w", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE image_sbom_state`); err != nil {
+		return fmt.Errorf("drop legacy image_sbom_state: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE image_sbom_state_new RENAME TO image_sbom_state`); err != nil {
+		return fmt.Errorf("rename image_sbom_state_new: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // InsertResult inserts a scan result and its vulnerabilities in a single transaction.
@@ -406,13 +478,13 @@ func (s *ScanDB) InsertSBOMResult(result models.SBOMResult, imageID string) erro
 		}
 	}
 
-	_, err = tx.Exec(`INSERT INTO image_sbom_state (host, image_ref, image_id, last_sbom_at, last_sbom_id)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(host, image_ref) DO UPDATE SET
+	_, err = tx.Exec(`INSERT INTO image_sbom_state (host, image_ref, format, image_id, last_sbom_at, last_sbom_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host, image_ref, format) DO UPDATE SET
 			image_id = excluded.image_id,
 			last_sbom_at = excluded.last_sbom_at,
 			last_sbom_id = excluded.last_sbom_id`,
-		result.Host, result.ImageRef, imageID, result.CompletedAt, result.ID,
+		result.Host, result.ImageRef, result.Format, imageID, result.CompletedAt, result.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert image_sbom_state: %w", err)
@@ -468,8 +540,20 @@ func (s *ScanDB) GetLatestSBOMResult(host, imageRef string) (*models.SBOMResult,
 
 // DeleteSBOMResult removes a persisted SBOM result and cascaded components by ID.
 func (s *ScanDB) DeleteSBOMResult(id string) error {
-	_, err := s.db.Exec(`DELETE FROM sbom_results WHERE id = ?`, id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM sbom_results WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete sbom_results: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM image_sbom_state WHERE last_sbom_id = ?`, id); err != nil {
+		return fmt.Errorf("delete image_sbom_state: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // GetPreviousResult returns the scan result immediately before the given scan ID
@@ -722,11 +806,11 @@ func (s *ScanDB) UpsertImageScanState(host, imageRef, imageID string, scannedAt 
 }
 
 // GetImageSBOMState returns the latest persisted SBOM state for an image on a host.
-func (s *ScanDB) GetImageSBOMState(host, imageRef string) (*ImageSBOMState, error) {
+func (s *ScanDB) GetImageSBOMState(host, imageRef, format string) (*ImageSBOMState, error) {
 	var state ImageSBOMState
-	err := s.db.QueryRow(`SELECT host, image_ref, image_id, last_sbom_at, last_sbom_id
-		FROM image_sbom_state WHERE host = ? AND image_ref = ?`, host, imageRef).
-		Scan(&state.Host, &state.ImageRef, &state.ImageID, &state.LastSBOMAt, &state.LastSBOMID)
+	err := s.db.QueryRow(`SELECT host, image_ref, format, image_id, last_sbom_at, last_sbom_id
+		FROM image_sbom_state WHERE host = ? AND image_ref = ? AND format = ?`, host, imageRef, format).
+		Scan(&state.Host, &state.ImageRef, &state.Format, &state.ImageID, &state.LastSBOMAt, &state.LastSBOMID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -737,14 +821,14 @@ func (s *ScanDB) GetImageSBOMState(host, imageRef string) (*ImageSBOMState, erro
 }
 
 // UpsertImageSBOMState updates the SBOM image state for rescan gating.
-func (s *ScanDB) UpsertImageSBOMState(host, imageRef, imageID string, generatedAt int64, sbomID string) error {
-	_, err := s.db.Exec(`INSERT INTO image_sbom_state (host, image_ref, image_id, last_sbom_at, last_sbom_id)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(host, image_ref) DO UPDATE SET
+func (s *ScanDB) UpsertImageSBOMState(host, imageRef, format, imageID string, generatedAt int64, sbomID string) error {
+	_, err := s.db.Exec(`INSERT INTO image_sbom_state (host, image_ref, format, image_id, last_sbom_at, last_sbom_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host, image_ref, format) DO UPDATE SET
 			image_id = excluded.image_id,
 			last_sbom_at = excluded.last_sbom_at,
 			last_sbom_id = excluded.last_sbom_id`,
-		host, imageRef, imageID, generatedAt, sbomID)
+		host, imageRef, format, imageID, generatedAt, sbomID)
 	return err
 }
 
@@ -765,8 +849,8 @@ func (s *ScanDB) CanRescan(host, imageRef, currentImageID string) (bool, error) 
 }
 
 // CanRegenerateSBOM checks if an image has changed since the last persisted SBOM.
-func (s *ScanDB) CanRegenerateSBOM(host, imageRef, currentImageID string) (bool, error) {
-	state, err := s.GetImageSBOMState(host, imageRef)
+func (s *ScanDB) CanRegenerateSBOM(host, imageRef, format, currentImageID string) (bool, error) {
+	state, err := s.GetImageSBOMState(host, imageRef, format)
 	if err != nil {
 		return false, err
 	}

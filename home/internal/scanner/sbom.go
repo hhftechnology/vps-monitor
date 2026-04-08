@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,13 +147,17 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 			}
 		case <-ctx.Done():
 			os.Remove(filePath)
-			s.updateSBOMStatus(job, models.ScanJobCancelled, "cancelled")
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				s.updateSBOMStatus(job, models.ScanJobFailed, "scan timed out")
+			} else {
+				s.updateSBOMStatus(job, models.ScanJobCancelled, "scan cancelled")
+			}
 			return
 		}
 	}
 
 	if exitCode != 0 {
-		tail := streamResult.stderr
+		tail := strings.TrimSpace(streamResult.stderr)
 		if tail == "" {
 			tail = readFilePrefix(filePath, 2*1024)
 		}

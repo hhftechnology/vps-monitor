@@ -1,3 +1,4 @@
+import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 import { format } from "date-fns";
 import {
@@ -55,6 +56,25 @@ function downloadBlob(blob: Blob, filename: string) {
   link.click();
   document.body.removeChild(link);
   window.URL.revokeObjectURL(url);
+}
+
+function toggleSort(
+  setParams: Dispatch<SetStateAction<SBOMHistoryQueryParams>>,
+  sortBy: NonNullable<SBOMHistoryQueryParams["sort_by"]>
+) {
+  setParams((prev) => ({
+    ...prev,
+    sort_by: sortBy,
+    sort_dir: prev.sort_dir === "desc" ? "asc" : "desc",
+  }));
+}
+
+function getAriaSort(
+  params: SBOMHistoryQueryParams,
+  sortBy: NonNullable<SBOMHistoryQueryParams["sort_by"]>
+): "none" | "ascending" | "descending" {
+  if (params.sort_by !== sortBy) return "none";
+  return params.sort_dir === "asc" ? "ascending" : "descending";
 }
 
 function ComponentsTable({ components }: { components: SBOMComponent[] }) {
@@ -212,29 +232,25 @@ export function SBOMHistoryPage() {
               <TableHead>Image</TableHead>
               <TableHead>Host</TableHead>
               <TableHead>Format</TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() =>
-                  setParams((prev) => ({
-                    ...prev,
-                    sort_by: "component_count",
-                    sort_dir: prev.sort_dir === "desc" ? "asc" : "desc",
-                  }))
-                }
-              >
-                Components {params.sort_by === "component_count" && (params.sort_dir === "desc" ? "\u2193" : "\u2191")}
+              <TableHead aria-sort={getAriaSort(params, "component_count")}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 font-medium"
+                  onClick={() => toggleSort(setParams, "component_count")}
+                >
+                  Components
+                  {params.sort_by === "component_count" && (params.sort_dir === "desc" ? "\u2193" : "\u2191")}
+                </button>
               </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() =>
-                  setParams((prev) => ({
-                    ...prev,
-                    sort_by: "completed_at",
-                    sort_dir: prev.sort_dir === "desc" ? "asc" : "desc",
-                  }))
-                }
-              >
-                Date {params.sort_by === "completed_at" && (params.sort_dir === "desc" ? "\u2193" : "\u2191")}
+              <TableHead aria-sort={getAriaSort(params, "completed_at")}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 font-medium"
+                  onClick={() => toggleSort(setParams, "completed_at")}
+                >
+                  Date
+                  {params.sort_by === "completed_at" && (params.sort_dir === "desc" ? "\u2193" : "\u2191")}
+                </button>
               </TableHead>
               <TableHead>Duration</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -255,13 +271,15 @@ export function SBOMHistoryPage() {
               </TableRow>
             ) : (
               historyData.results.map((result) => (
-                <TableRow
-                  key={result.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setSelectedSBOMId(result.id)}
-                >
+                <TableRow key={result.id}>
                   <TableCell className="font-mono text-sm max-w-[250px] truncate">
-                    {result.image_ref}
+                    <button
+                      type="button"
+                      className="max-w-full truncate text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      onClick={() => setSelectedSBOMId(result.id)}
+                    >
+                      {result.image_ref}
+                    </button>
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{result.host}</Badge>
@@ -280,10 +298,9 @@ export function SBOMHistoryPage() {
                         variant="ghost"
                         size="icon"
                         title="Download SBOM JSON"
-                        onClick={(event) => {
-                          event.stopPropagation();
+                        onClick={() => {
                           downloadSBOMHistoryFile(result.id)
-                            .then((blob) => downloadBlob(blob, `sbom-${result.id}.json`))
+                            .then(({ blob, filename }) => downloadBlob(blob, filename))
                             .catch((error) => {
                               console.error("Failed to download SBOM:", error);
                             });

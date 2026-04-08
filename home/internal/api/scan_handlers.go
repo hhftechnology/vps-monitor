@@ -252,11 +252,11 @@ func (h *ScanHandlers) StartSBOMGeneration(w http.ResponseWriter, r *http.Reques
 		db := h.scanner.Store().DB()
 		currentImageID := h.resolveImageID(req.Host, req.ImageRef)
 		if currentImageID != "" {
-			canRegenerate, err := db.CanRegenerateSBOM(req.Host, req.ImageRef, currentImageID)
+			canRegenerate, err := db.CanRegenerateSBOM(req.Host, req.ImageRef, string(req.Format), currentImageID)
 			if err != nil {
 				log.Printf("Failed to check SBOM regeneration eligibility: %v", err)
 			} else if !canRegenerate {
-				state, _ := db.GetImageSBOMState(req.Host, req.ImageRef)
+				state, _ := db.GetImageSBOMState(req.Host, req.ImageRef, string(req.Format))
 				resp := map[string]any{
 					"error":   "image_unchanged",
 					"message": "Image has not changed since the last SBOM was generated. Pull a new version or enable force rescan in settings.",

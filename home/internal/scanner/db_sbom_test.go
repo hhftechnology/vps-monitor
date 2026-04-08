@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -78,15 +79,26 @@ func TestInsertSBOMResultUpsertsImageSBOMState(t *testing.T) {
 		t.Fatalf("InsertSBOMResult(second) error = %v", err)
 	}
 
-	state, err := db.GetImageSBOMState("local", "alpine:3.18")
+	spdxState, err := db.GetImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX))
 	if err != nil {
-		t.Fatalf("GetImageSBOMState() error = %v", err)
+		t.Fatalf("GetImageSBOMState(SPDX) error = %v", err)
 	}
-	if state == nil {
-		t.Fatal("GetImageSBOMState() = nil, want state")
+	if spdxState == nil {
+		t.Fatal("GetImageSBOMState(SPDX) = nil, want state")
 	}
-	if state.ImageID != "sha256:second" || state.LastSBOMID != second.ID || state.LastSBOMAt != second.CompletedAt {
-		t.Fatalf("unexpected SBOM state: %+v", state)
+	if spdxState.ImageID != "sha256:first" || spdxState.LastSBOMID != first.ID || spdxState.LastSBOMAt != first.CompletedAt {
+		t.Fatalf("unexpected SPDX SBOM state: %+v", spdxState)
+	}
+
+	cycloneDXState, err := db.GetImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatCycloneDX))
+	if err != nil {
+		t.Fatalf("GetImageSBOMState(CycloneDX) error = %v", err)
+	}
+	if cycloneDXState == nil {
+		t.Fatal("GetImageSBOMState(CycloneDX) = nil, want state")
+	}
+	if cycloneDXState.ImageID != "sha256:second" || cycloneDXState.LastSBOMID != second.ID || cycloneDXState.LastSBOMAt != second.CompletedAt {
+		t.Fatalf("unexpected CycloneDX SBOM state: %+v", cycloneDXState)
 	}
 }
 
@@ -216,7 +228,7 @@ func TestListSBOMedImagesDistinctPairs(t *testing.T) {
 func TestCanRegenerateSBOMNeverGenerated(t *testing.T) {
 	db := newTestScanDB(t)
 
-	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", "sha256:new")
+	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:new")
 	if err != nil {
 		t.Fatalf("CanRegenerateSBOM() error = %v", err)
 	}
@@ -228,11 +240,11 @@ func TestCanRegenerateSBOMNeverGenerated(t *testing.T) {
 func TestCanRegenerateSBOMImageChanged(t *testing.T) {
 	db := newTestScanDB(t)
 
-	if err := db.UpsertImageSBOMState("local", "alpine:3.18", "sha256:old", 100, "sbom-1"); err != nil {
+	if err := db.UpsertImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:old", 100, "sbom-1"); err != nil {
 		t.Fatalf("UpsertImageSBOMState() error = %v", err)
 	}
 
-	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", "sha256:new")
+	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:new")
 	if err != nil {
 		t.Fatalf("CanRegenerateSBOM() error = %v", err)
 	}
@@ -244,16 +256,32 @@ func TestCanRegenerateSBOMImageChanged(t *testing.T) {
 func TestCanRegenerateSBOMImageUnchanged(t *testing.T) {
 	db := newTestScanDB(t)
 
-	if err := db.UpsertImageSBOMState("local", "alpine:3.18", "sha256:same", 100, "sbom-1"); err != nil {
+	if err := db.UpsertImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:same", 100, "sbom-1"); err != nil {
 		t.Fatalf("UpsertImageSBOMState() error = %v", err)
 	}
 
-	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", "sha256:same")
+	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:same")
 	if err != nil {
 		t.Fatalf("CanRegenerateSBOM() error = %v", err)
 	}
 	if canRegenerate {
 		t.Fatal("expected regenerate blocked when image digest unchanged")
+	}
+}
+
+func TestCanRegenerateSBOMIsFormatSpecific(t *testing.T) {
+	db := newTestScanDB(t)
+
+	if err := db.UpsertImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:same", 100, "sbom-1"); err != nil {
+		t.Fatalf("UpsertImageSBOMState() error = %v", err)
+	}
+
+	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", string(models.SBOMFormatCycloneDX), "sha256:same")
+	if err != nil {
+		t.Fatalf("CanRegenerateSBOM() error = %v", err)
+	}
+	if !canRegenerate {
+		t.Fatal("expected regenerate allowed for a different SBOM format")
 	}
 }
 
@@ -282,5 +310,73 @@ func TestDeleteSBOMResultCascadeDeletesComponents(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("sbom component count after delete = %d, want 0", count)
+	}
+
+	state, err := db.GetImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX))
+	if err != nil {
+		t.Fatalf("GetImageSBOMState() after delete error = %v", err)
+	}
+	if state != nil {
+		t.Fatalf("GetImageSBOMState() after delete = %+v, want nil", state)
+	}
+}
+
+func TestNewScanDBMigratesLegacyImageSBOMStateTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-scan.db")
+
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := legacyDB.Exec(`CREATE TABLE image_sbom_state (
+		host         TEXT NOT NULL,
+		image_ref    TEXT NOT NULL,
+		image_id     TEXT NOT NULL,
+		last_sbom_at INTEGER NOT NULL DEFAULT 0,
+		last_sbom_id TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (host, image_ref)
+	)`); err != nil {
+		t.Fatalf("create legacy image_sbom_state error = %v", err)
+	}
+	if _, err := legacyDB.Exec(`CREATE TABLE settings (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatalf("create settings error = %v", err)
+	}
+	if _, err := legacyDB.Exec(`INSERT INTO image_sbom_state (host, image_ref, image_id, last_sbom_at, last_sbom_id)
+		VALUES (?, ?, ?, ?, ?)`, "local", "alpine:3.18", "sha256:legacy", 123, "sbom-legacy"); err != nil {
+		t.Fatalf("insert legacy image_sbom_state row error = %v", err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("legacyDB.Close() error = %v", err)
+	}
+
+	db, err := NewScanDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewScanDB() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	state, err := db.GetImageSBOMState("local", "alpine:3.18", "")
+	if err != nil {
+		t.Fatalf("GetImageSBOMState() error = %v", err)
+	}
+	if state == nil {
+		t.Fatal("GetImageSBOMState() = nil, want migrated legacy state")
+	}
+	if state.Format != "" || state.ImageID != "sha256:legacy" || state.LastSBOMID != "sbom-legacy" {
+		t.Fatalf("unexpected migrated state: %+v", state)
+	}
+
+	canRegenerate, err := db.CanRegenerateSBOM("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:legacy")
+	if err != nil {
+		t.Fatalf("CanRegenerateSBOM() error = %v", err)
+	}
+	if !canRegenerate {
+		t.Fatal("expected legacy state not to block format-specific regeneration")
 	}
 }

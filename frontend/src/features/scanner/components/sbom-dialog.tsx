@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { DownloadIcon, FileCheck2Icon, FileTextIcon, HistoryIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -39,10 +38,10 @@ interface SBOMDialogProps {
   onOpenChange: (open: boolean) => void;
   imageRef: string;
   host: string;
+  onJobCreated?: (jobId: string) => void;
 }
 
-export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogProps) {
-  const queryClient = useQueryClient();
+export function SBOMDialog({ isOpen, onOpenChange, imageRef, host, onJobCreated }: SBOMDialogProps) {
   const [format, setFormat] = useState<SBOMFormat>("spdx-json");
   const [jobId, setJobId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
@@ -66,18 +65,6 @@ export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogP
         .catch(console.error);
     }
   }, [isComplete, sbomData, jobId]);
-
-  const toastFiredRef = useRef(false);
-  useEffect(() => {
-    toastFiredRef.current = false;
-  }, [jobId]);
-  useEffect(() => {
-    if (!isComplete || toastFiredRef.current) return;
-    toastFiredRef.current = true;
-    toast.success("SBOM generated and saved to history");
-    queryClient.invalidateQueries({ queryKey: ["sbomedImages"] });
-    queryClient.invalidateQueries({ queryKey: ["sbomHistory"] });
-  }, [isComplete, queryClient]);
 
   const getSbomComponents = () => {
     if (!sbomData) return [];
@@ -108,6 +95,7 @@ export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogP
       const job = await generateMutation.mutateAsync({ imageRef, host, format });
       setJobId(job.id);
       setStarted(true);
+      onJobCreated?.(job.id);
     } catch (error) {
       if (error instanceof SBOMRegenBlockedError) {
         setRegenBlocked(true);

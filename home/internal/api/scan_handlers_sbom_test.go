@@ -33,8 +33,8 @@ func testSBOMResult(id string, completedAt int64, filePath string) models.SBOMRe
 }
 
 func TestStartSBOMGeneration409WhenImageUnchanged(t *testing.T) {
-	svc := newTestScannerService()
-	if err := svc.Store().DB().UpsertImageSBOMState("local", "alpine:3.18", "sha256:same", 100, "sbom-1"); err != nil {
+	svc := newTestScannerService(t)
+	if err := svc.Store().DB().UpsertImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:same", 100, "sbom-1"); err != nil {
 		t.Fatalf("UpsertImageSBOMState() error = %v", err)
 	}
 
@@ -64,8 +64,8 @@ func TestStartSBOMGeneration409WhenImageUnchanged(t *testing.T) {
 }
 
 func TestStartSBOMGenerationBypassesGateWhenForceTrue(t *testing.T) {
-	svc := newTestScannerService()
-	if err := svc.Store().DB().UpsertImageSBOMState("local", "alpine:3.18", "sha256:same", 100, "sbom-1"); err != nil {
+	svc := newTestScannerService(t)
+	if err := svc.Store().DB().UpsertImageSBOMState("local", "alpine:3.18", string(models.SBOMFormatSPDX), "sha256:same", 100, "sbom-1"); err != nil {
 		t.Fatalf("UpsertImageSBOMState() error = %v", err)
 	}
 
@@ -84,7 +84,7 @@ func TestStartSBOMGenerationBypassesGateWhenForceTrue(t *testing.T) {
 }
 
 func TestGetSBOMHistoryReturnsPagedResults(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	h := &ScanHandlers{scanner: svc}
 
 	filePath1 := filepath.Join(t.TempDir(), "sbom-1.json")
@@ -117,7 +117,7 @@ func TestGetSBOMHistoryReturnsPagedResults(t *testing.T) {
 }
 
 func TestDeleteSBOMHistoryRemovesRowAndFile(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	filePath := filepath.Join(t.TempDir(), "sbom-delete.json")
 	if err := os.WriteFile(filePath, []byte(`{"bomFormat":"CycloneDX"}`), 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
@@ -150,7 +150,7 @@ func TestDeleteSBOMHistoryRemovesRowAndFile(t *testing.T) {
 }
 
 func TestDownloadSBOMHistoryReturnsJSON(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	filePath := filepath.Join(t.TempDir(), "sbom-download.json")
 	content := []byte(`{"bomFormat":"CycloneDX","components":[{"name":"busybox"}]}`)
 	if err := os.WriteFile(filePath, content, 0o600); err != nil {
@@ -176,7 +176,7 @@ func TestDownloadSBOMHistoryReturnsJSON(t *testing.T) {
 }
 
 func TestDownloadSBOMHistory410WhenFileMissing(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	filePath := filepath.Join(t.TempDir(), "missing.json")
 
 	if err := svc.Store().DB().InsertSBOMResult(testSBOMResult("sbom-missing", 100, filePath), "sha256:1"); err != nil {

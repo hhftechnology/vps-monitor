@@ -10,6 +10,19 @@ import type {
 
 const SBOM_HISTORY_ENDPOINT = `${API_BASE_URL}/api/v1/scan/sbom/history`;
 
+function parseContentDispositionFilename(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+
+  const encodedMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (encodedMatch?.[1]) {
+    return decodeURIComponent(encodedMatch[1].trim().replace(/^"|"$/g, ""));
+  }
+
+  const filenameMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i);
+  const filename = filenameMatch?.[1] ?? filenameMatch?.[2];
+  return filename?.trim().replace(/^"|"$/g, "") || null;
+}
+
 export async function getSBOMHistory(params: SBOMHistoryQueryParams): Promise<SBOMHistoryPage> {
   const searchParams = new URLSearchParams();
 
@@ -70,7 +83,9 @@ export async function deleteSBOMHistory(id: string): Promise<void> {
   }
 }
 
-export async function downloadSBOMHistoryFile(id: string): Promise<Blob> {
+export async function downloadSBOMHistoryFile(
+  id: string
+): Promise<{ blob: Blob; filename: string }> {
   const response = await authenticatedFetch(`${SBOM_HISTORY_ENDPOINT}/${id}/download`);
 
   if (!response.ok) {
@@ -78,5 +93,10 @@ export async function downloadSBOMHistoryFile(id: string): Promise<Blob> {
     throw new Error(message || `Request failed with status ${response.status}`);
   }
 
-  return response.blob();
+  const blob = await response.blob();
+  const filename =
+    parseContentDispositionFilename(response.headers.get("Content-Disposition")) ||
+    `sbom-${id}.json`;
+
+  return { blob, filename };
 }

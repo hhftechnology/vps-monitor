@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScanResult } from "../types";
 import { ScanResultsExport } from "./scan-results-export";
 
-// jsdom does not implement URL.createObjectURL / revokeObjectURL
 const createObjectURL = vi.fn(() => "blob:test");
 const revokeObjectURL = vi.fn();
 Object.defineProperty(URL, "createObjectURL", { value: createObjectURL, writable: true });
@@ -36,19 +35,27 @@ const sampleResult: ScanResult = {
   duration_ms: 100000,
 };
 
+function openMenu() {
+  fireEvent.pointerDown(screen.getByRole("button", { name: /Export/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 describe("ScanResultsExport", () => {
   let anchorClickSpy: ReturnType<typeof vi.spyOn>;
   let anchorElement: HTMLAnchorElement;
+  let originalCreateElement: typeof document.createElement;
 
   beforeEach(() => {
-    // Create a real anchor element we can inspect
-    anchorElement = document.createElement("a");
+    originalCreateElement = document.createElement.bind(document);
+    anchorElement = originalCreateElement("a");
     anchorClickSpy = vi.spyOn(anchorElement, "click").mockImplementation(() => {});
-    // Intercept document.createElement("a") to return our spy element
-    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
-      if (tag === "a") return anchorElement as unknown as HTMLElement;
-      // For all other tags (div, span, etc.) fall through to the real implementation
-      return HTMLElement.prototype.constructor.call(document.createElementNS("http://www.w3.org/1999/xhtml", tag)) as HTMLElement;
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string, options?: ElementCreationOptions) => {
+      if (tagName === "a") {
+        return anchorElement;
+      }
+      return originalCreateElement(tagName, options);
     });
   });
 
@@ -64,7 +71,7 @@ describe("ScanResultsExport", () => {
 
   it("opens dropdown with format options when the trigger is clicked", () => {
     render(<ScanResultsExport result={sampleResult} />);
-    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+    openMenu();
 
     expect(screen.getByText("Markdown report (.md)")).toBeInTheDocument();
     expect(screen.getByText("CSV spreadsheet (.csv)")).toBeInTheDocument();
@@ -73,7 +80,7 @@ describe("ScanResultsExport", () => {
 
   it("triggers a download with .json extension when JSON is selected", () => {
     render(<ScanResultsExport result={sampleResult} />);
-    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+    openMenu();
     fireEvent.click(screen.getByText("JSON data (.json)"));
 
     expect(createObjectURL).toHaveBeenCalled();
@@ -83,7 +90,7 @@ describe("ScanResultsExport", () => {
 
   it("triggers a download with .csv extension when CSV is selected", () => {
     render(<ScanResultsExport result={sampleResult} />);
-    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+    openMenu();
     fireEvent.click(screen.getByText("CSV spreadsheet (.csv)"));
 
     expect(createObjectURL).toHaveBeenCalled();
@@ -92,7 +99,7 @@ describe("ScanResultsExport", () => {
 
   it("triggers a download with .md extension when Markdown is selected", () => {
     render(<ScanResultsExport result={sampleResult} />);
-    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+    openMenu();
     fireEvent.click(screen.getByText("Markdown report (.md)"));
 
     expect(createObjectURL).toHaveBeenCalled();
@@ -101,16 +108,15 @@ describe("ScanResultsExport", () => {
 
   it("uses image_ref in the filename with special chars replaced", () => {
     render(<ScanResultsExport result={sampleResult} />);
-    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+    openMenu();
     fireEvent.click(screen.getByText("JSON data (.json)"));
 
-    // nginx:latest → nginx_latest in filename
     expect(anchorElement.download).toMatch(/nginx_latest/);
   });
 
   it("revokes the object URL after triggering the download", () => {
     render(<ScanResultsExport result={sampleResult} />);
-    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+    openMenu();
     fireEvent.click(screen.getByText("JSON data (.json)"));
 
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
