@@ -19,9 +19,10 @@ import (
 
 // ScanHandlers holds dependencies for scan-related handlers
 type ScanHandlers struct {
-	scanner     *scanner.ScannerService
-	manager     *config.Manager
-	autoScanner *scanner.AutoScanner
+	scanner          *scanner.ScannerService
+	manager          *config.Manager
+	autoScanner      *scanner.AutoScanner
+	resolveImageIDFn func(host, imageRef string) string
 }
 
 // NewScanHandlers creates new scan handlers
@@ -227,9 +228,10 @@ func (h *ScanHandlers) GetLatestScanResult(w http.ResponseWriter, r *http.Reques
 // StartSBOMGeneration handles POST /api/v1/scan/sbom
 func (h *ScanHandlers) StartSBOMGeneration(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ImageRef string           `json:"imageRef"`
-		Host     string           `json:"host"`
+		ImageRef string            `json:"imageRef"`
+		Host     string            `json:"host"`
 		Format   models.SBOMFormat `json:"format"`
+		Force    bool              `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -243,6 +245,30 @@ func (h *ScanHandlers) StartSBOMGeneration(w http.ResponseWriter, r *http.Reques
 
 	if req.Format == "" {
 		req.Format = models.SBOMFormatSPDX
+	}
+
+	cfg := h.scanner.Config()
+	if !cfg.ForceRescan && !req.Force {
+		db := h.scanner.Store().DB()
+		currentImageID := h.resolveImageID(req.Host, req.ImageRef)
+		if currentImageID != "" {
+			canRegenerate, err := db.CanRegenerateSBOM(req.Host, req.ImageRef, currentImageID)
+			if err != nil {
+				log.Printf("Failed to check SBOM regeneration eligibility: %v", err)
+			} else if !canRegenerate {
+				state, _ := db.GetImageSBOMState(req.Host, req.ImageRef)
+				resp := map[string]any{
+					"error":   "image_unchanged",
+					"message": "Image has not changed since the last SBOM was generated. Pull a new version or enable force rescan in settings.",
+				}
+				if state != nil {
+					resp["last_sbom_id"] = state.LastSBOMID
+					resp["last_sbom_at"] = state.LastSBOMAt
+				}
+				WriteJsonResponse(w, http.StatusConflict, resp)
+				return
+			}
+		}
 	}
 
 	job, err := h.scanner.StartSBOMGeneration(req.ImageRef, req.Host, req.Format)
@@ -277,7 +303,11 @@ func (h *ScanHandlers) GetSBOMJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "SBOM file no longer available", http.StatusGone)
 			return
 		}
-		w.Header().Set("Content-Disposition", "attachment; filename=sbom-"+id+".json")
+		fileID := id
+		if job.ResultID != "" {
+			fileID = job.ResultID
+		}
+		w.Header().Set("Content-Disposition", "attachment; filename=sbom-"+fileID+".json")
 		w.Header().Set("Content-Type", "application/json")
 		http.ServeFile(w, r, job.FilePath)
 		return
@@ -393,18 +423,17 @@ func (h *ScanHandlers) TestScanNotification(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-
 // --- History Handlers ---
 
 // GetScanHistory handles GET /api/v1/scan/history
 func (h *ScanHandlers) GetScanHistory(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	params := scanner.HistoryQuery{
-		ImageRef: q.Get("image"),
-		Host:     q.Get("host"),
+		ImageRef:    q.Get("image"),
+		Host:        q.Get("host"),
 		MinSeverity: q.Get("min_severity"),
-		SortBy:   q.Get("sort_by"),
-		SortDir:  q.Get("sort_dir"),
+		SortBy:      q.Get("sort_by"),
+		SortDir:     q.Get("sort_dir"),
 	}
 
 	if v := q.Get("page"); v != "" {
@@ -568,9 +597,165 @@ func (h *ScanHandlers) DeleteScanHistory(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// GetSBOMHistory handles GET /api/v1/scan/sbom/history.
+func (h *ScanHandlers) GetSBOMHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	params := scanner.SBOMHistoryQuery{
+		ImageRef: q.Get("image"),
+		Host:     q.Get("host"),
+		Format:   q.Get("format"),
+		SortBy:   q.Get("sort_by"),
+		SortDir:  q.Get("sort_dir"),
+	}
+
+	if v := q.Get("page"); v != "" {
+		val, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid page", http.StatusBadRequest)
+			return
+		}
+		params.Page = val
+	}
+	if v := q.Get("page_size"); v != "" {
+		val, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid page_size", http.StatusBadRequest)
+			return
+		}
+		params.PageSize = val
+	}
+	if v := q.Get("start_date"); v != "" {
+		val, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid start_date", http.StatusBadRequest)
+			return
+		}
+		params.StartDate = val
+	}
+	if v := q.Get("end_date"); v != "" {
+		val, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid end_date", http.StatusBadRequest)
+			return
+		}
+		params.EndDate = val
+	}
+
+	page, err := h.scanner.Store().DB().QuerySBOMHistory(params)
+	if err != nil {
+		log.Printf("Failed to query SBOM history: %v", err)
+		http.Error(w, "failed to query SBOM history", http.StatusInternalServerError)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, page)
+}
+
+// GetSBOMHistoryDetail handles GET /api/v1/scan/sbom/history/{id}.
+func (h *ScanHandlers) GetSBOMHistoryDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "sbom id is required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.scanner.Store().DB().GetSBOMResultByID(id)
+	if err != nil {
+		log.Printf("Failed to get SBOM result: %v", err)
+		http.Error(w, "failed to get SBOM result", http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		http.Error(w, "sbom result not found", http.StatusNotFound)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"result": result,
+	})
+}
+
+// GetSBOMedImages handles GET /api/v1/scan/sbom/history/images.
+func (h *ScanHandlers) GetSBOMedImages(w http.ResponseWriter, r *http.Request) {
+	images, err := h.scanner.Store().DB().ListSBOMedImages()
+	if err != nil {
+		log.Printf("Failed to list SBOMed images: %v", err)
+		http.Error(w, "failed to list SBOMed images", http.StatusInternalServerError)
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"images": images,
+	})
+}
+
+// DownloadSBOMHistory handles GET /api/v1/scan/sbom/history/{id}/download.
+func (h *ScanHandlers) DownloadSBOMHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "sbom id is required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.scanner.Store().DB().GetSBOMResultByID(id)
+	if err != nil {
+		log.Printf("Failed to get SBOM result for download: %v", err)
+		http.Error(w, "failed to get SBOM result", http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		http.Error(w, "sbom result not found", http.StatusNotFound)
+		return
+	}
+	if _, err := os.Stat(result.FilePath); err != nil {
+		http.Error(w, "SBOM file no longer available", http.StatusGone)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=sbom-"+id+".json")
+	w.Header().Set("Content-Type", "application/json")
+	http.ServeFile(w, r, result.FilePath)
+}
+
+// DeleteSBOMHistory handles DELETE /api/v1/scan/sbom/history/{id}.
+func (h *ScanHandlers) DeleteSBOMHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing sbom id", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.scanner.Store().DB().GetSBOMResultByID(id)
+	if err != nil {
+		log.Printf("Failed to load SBOM result for deletion: %v", err)
+		http.Error(w, "failed to delete SBOM result", http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		http.Error(w, "sbom result not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.scanner.Store().DB().DeleteSBOMResult(id); err != nil {
+		log.Printf("Failed to delete SBOM result %s: %v", id, err)
+		http.Error(w, "failed to delete SBOM result", http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.Remove(result.FilePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Failed to remove SBOM artifact %s: %v", result.FilePath, err)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- Helpers ---
 
 func (h *ScanHandlers) resolveImageID(host, imageRef string) string {
+	if h.resolveImageIDFn != nil {
+		return h.resolveImageIDFn(host, imageRef)
+	}
+
 	dockerClient, release := h.scanner.Registry().AcquireDocker()
 	if dockerClient == nil {
 		release()

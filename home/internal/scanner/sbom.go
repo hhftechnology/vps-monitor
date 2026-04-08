@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,6 +61,17 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 		return
 	}
 
+	startedAt := time.Now()
+	resultID := uuid.New().String()
+	filePath := filepath.Join(sbomDir, resultID+".json")
+
+	inspect, _, err := apiClient.ImageInspectWithRaw(ctx, job.ImageRef)
+	if err != nil {
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to inspect image: %v", err))
+		return
+	}
+	imageID := inspect.ID
+
 	s.updateSBOMStatus(job, models.ScanJobPulling, "")
 
 	scannerImage := cfg.SyftImage
@@ -97,7 +109,6 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to create sbom directory: %v", err))
 		return
 	}
-	filePath := filepath.Join(sbomDir, job.ID+".json")
 
 	streamDone := make(chan syftStreamResult, 1)
 	go func() {
@@ -150,19 +161,46 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 		return
 	}
 
+	components, err := parseSBOMComponents(filePath, job.Format)
+	if err != nil {
+		os.Remove(filePath)
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to parse SBOM: %v", err))
+		return
+	}
+
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		os.Remove(filePath)
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to stat SBOM output: %v", err))
+		return
+	}
+
+	completedAt := time.Now()
+	result := models.SBOMResult{
+		ID:             resultID,
+		ImageRef:       job.ImageRef,
+		Host:           job.Host,
+		Format:         job.Format,
+		ComponentCount: len(components),
+		FileSize:       fileInfo.Size(),
+		FilePath:       filePath,
+		StartedAt:      startedAt.Unix(),
+		CompletedAt:    completedAt.Unix(),
+		DurationMs:     completedAt.Sub(startedAt).Milliseconds(),
+		Components:     components,
+	}
+
+	if err := s.store.AddSBOM(result, imageID); err != nil {
+		os.Remove(filePath)
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to persist SBOM: %v", err))
+		return
+	}
+
 	s.mu.Lock()
 	job.Status = models.ScanJobComplete
+	job.ResultID = resultID
 	job.FilePath = filePath
 	s.mu.Unlock()
-
-	// Schedule cleanup after 1 hour
-	time.AfterFunc(1*time.Hour, func() {
-		os.Remove(filePath)
-		s.mu.Lock()
-		job.FilePath = ""
-		job.Status = models.ScanJobExpired
-		s.mu.Unlock()
-	})
 }
 
 func (s *ScannerService) updateSBOMStatus(job *models.SBOMJob, status models.ScanJobStatus, errMsg string) {
@@ -188,4 +226,75 @@ func syftStreamFailureCause(result syftStreamResult) any {
 		return stderr
 	}
 	return nil
+}
+
+type cyclonedxSBOM struct {
+	Components []struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		Type    string `json:"type"`
+		PURL    string `json:"purl"`
+	} `json:"components"`
+}
+
+type spdxSBOM struct {
+	Packages []struct {
+		Name         string `json:"name"`
+		VersionInfo  string `json:"versionInfo"`
+		ExternalRefs []struct {
+			ReferenceType    string `json:"referenceType"`
+			ReferenceLocator string `json:"referenceLocator"`
+		} `json:"externalRefs"`
+	} `json:"packages"`
+}
+
+func parseSBOMComponents(filePath string, format models.SBOMFormat) ([]models.SBOMComponent, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	switch format {
+	case models.SBOMFormatCycloneDX:
+		var document cyclonedxSBOM
+		if err := json.Unmarshal(data, &document); err != nil {
+			return nil, err
+		}
+
+		components := make([]models.SBOMComponent, 0, len(document.Components))
+		for _, component := range document.Components {
+			components = append(components, models.SBOMComponent{
+				Name:    component.Name,
+				Version: component.Version,
+				Type:    component.Type,
+				PURL:    component.PURL,
+			})
+		}
+		return components, nil
+	case models.SBOMFormatSPDX:
+		var document spdxSBOM
+		if err := json.Unmarshal(data, &document); err != nil {
+			return nil, err
+		}
+
+		components := make([]models.SBOMComponent, 0, len(document.Packages))
+		for _, pkg := range document.Packages {
+			purl := ""
+			for _, ref := range pkg.ExternalRefs {
+				if ref.ReferenceType == "purl" {
+					purl = ref.ReferenceLocator
+					break
+				}
+			}
+			components = append(components, models.SBOMComponent{
+				Name:    pkg.Name,
+				Version: pkg.VersionInfo,
+				Type:    "package",
+				PURL:    purl,
+			})
+		}
+		return components, nil
+	default:
+		return nil, fmt.Errorf("unsupported SBOM format: %s", format)
+	}
 }

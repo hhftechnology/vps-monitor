@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -30,7 +31,15 @@ func newTestScannerService() *scanner.ScannerService {
 	// Registry with nil docker client: AcquireDocker returns (nil, func(){})
 	// which is handled gracefully in runScan.
 	registry := services.NewRegistry(nil, nil, nil, &config.Config{}, nil)
-	return scanner.NewScannerService(registry, cfg)
+	tempDir, err := os.MkdirTemp("", "scan-handlers-db-*")
+	if err != nil {
+		panic(err)
+	}
+	db, err := scanner.NewScanDB(filepath.Join(tempDir, "scan.db"))
+	if err != nil {
+		panic(err)
+	}
+	return scanner.NewScannerService(registry, cfg, db)
 }
 
 // newTestManager creates a Manager pointing to a temp file (for tests that
@@ -49,8 +58,6 @@ func chiContext(r *http.Request, params map[string]string) *http.Request {
 	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, rctx)
 	return r.WithContext(ctx)
 }
-
-
 
 // ─── GetScanJobs ──────────────────────────────────────────────────────────────
 
@@ -202,8 +209,7 @@ func TestCancelScanJobReturnsNotFoundForUnknownID(t *testing.T) {
 func TestGetScanResultsRequiresHostParam(t *testing.T) {
 	h := &ScanHandlers{scanner: newTestScannerService()}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/nginx:latest", nil)
-	req = chiContext(req, map[string]string{"imageRef": "nginx:latest"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results?image=nginx:latest", nil)
 	// No host query param
 	rec := httptest.NewRecorder()
 	h.GetScanResults(rec, req)
@@ -216,8 +222,7 @@ func TestGetScanResultsRequiresHostParam(t *testing.T) {
 func TestGetScanResultsReturnsEmptyForUnknownImage(t *testing.T) {
 	h := &ScanHandlers{scanner: newTestScannerService()}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/unknown:image?host=local", nil)
-	req = chiContext(req, map[string]string{"imageRef": "unknown:image"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results?image=unknown:image&host=local", nil)
 	rec := httptest.NewRecorder()
 	h.GetScanResults(rec, req)
 
@@ -236,8 +241,7 @@ func TestGetScanResultsReturnsStoredResults(t *testing.T) {
 	})
 
 	h := &ScanHandlers{scanner: svc}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/redis:7?host=local", nil)
-	req = chiContext(req, map[string]string{"imageRef": "redis:7"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results?image=redis:7&host=local", nil)
 	rec := httptest.NewRecorder()
 	h.GetScanResults(rec, req)
 
@@ -263,8 +267,7 @@ func TestGetScanResultsReturnsStoredResults(t *testing.T) {
 func TestGetLatestScanResultRequiresHostParam(t *testing.T) {
 	h := &ScanHandlers{scanner: newTestScannerService()}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/nginx:latest/latest", nil)
-	req = chiContext(req, map[string]string{"imageRef": "nginx:latest"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/latest?image=nginx:latest", nil)
 	rec := httptest.NewRecorder()
 	h.GetLatestScanResult(rec, req)
 
@@ -276,8 +279,7 @@ func TestGetLatestScanResultRequiresHostParam(t *testing.T) {
 func TestGetLatestScanResultReturns404WhenNoResults(t *testing.T) {
 	h := &ScanHandlers{scanner: newTestScannerService()}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/missing:img/latest?host=local", nil)
-	req = chiContext(req, map[string]string{"imageRef": "missing:img"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/latest?image=missing:img&host=local", nil)
 	rec := httptest.NewRecorder()
 	h.GetLatestScanResult(rec, req)
 
@@ -295,8 +297,7 @@ func TestGetLatestScanResultReturnsResult(t *testing.T) {
 	})
 
 	h := &ScanHandlers{scanner: svc}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/postgres:16/latest?host=remote", nil)
-	req = chiContext(req, map[string]string{"imageRef": "postgres:16"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/latest?image=postgres:16&host=remote", nil)
 	rec := httptest.NewRecorder()
 	h.GetLatestScanResult(rec, req)
 

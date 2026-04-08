@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,10 +50,52 @@ func NewScannerService(registry *services.Registry, cfg *models.ScannerConfig, d
 		cancels:  make(map[string]context.CancelFunc),
 	}
 	s.config.Store(cfg)
+	s.sweepOrphanSBOMs()
 
 	go s.gcWorker()
 
 	return s
+}
+
+func (s *ScannerService) sweepOrphanSBOMs() {
+	entries, err := os.ReadDir(sbomDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("Failed to read SBOM directory for orphan sweep: %v", err)
+		}
+		return
+	}
+
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			log.Printf("Failed to inspect SBOM artifact %q: %v", entry.Name(), err)
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+
+		resultID := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		result, err := s.store.DB().GetSBOMResultByID(resultID)
+		if err != nil {
+			log.Printf("Failed to verify SBOM artifact %q against DB: %v", entry.Name(), err)
+			continue
+		}
+		if result != nil {
+			continue
+		}
+
+		path := filepath.Join(sbomDir, entry.Name())
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("Failed to remove orphan SBOM artifact %q: %v", path, err)
+		}
+	}
 }
 
 func (s *ScannerService) gcWorker() {

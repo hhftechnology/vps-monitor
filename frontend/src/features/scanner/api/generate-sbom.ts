@@ -1,7 +1,7 @@
 import { authenticatedFetch } from "@/lib/api-client";
 import { API_BASE_URL } from "@/types/api";
 
-import type { SBOMFormat, SBOMJob } from "../types";
+import type { SBOMFormat, SBOMJob, SBOMRescanBlockedResponse } from "../types";
 
 const SBOM_ENDPOINT = `${API_BASE_URL}/api/v1/scan/sbom`;
 
@@ -9,6 +9,17 @@ export interface GenerateSBOMParams {
   imageRef: string;
   host: string;
   format?: SBOMFormat;
+  force?: boolean;
+}
+
+export class SBOMRegenBlockedError extends Error {
+  readonly data: SBOMRescanBlockedResponse;
+
+  constructor(data: SBOMRescanBlockedResponse) {
+    super(data.message);
+    this.name = "SBOMRegenBlockedError";
+    this.data = data;
+  }
 }
 
 export async function generateSBOM(params: GenerateSBOMParams): Promise<SBOMJob> {
@@ -17,6 +28,11 @@ export async function generateSBOM(params: GenerateSBOMParams): Promise<SBOMJob>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
+
+  if (response.status === 409) {
+    const data = await response.json();
+    throw new SBOMRegenBlockedError(data as SBOMRescanBlockedResponse);
+  }
 
   if (!response.ok) {
     const message = await response.text();

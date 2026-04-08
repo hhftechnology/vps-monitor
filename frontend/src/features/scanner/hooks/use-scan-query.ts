@@ -17,7 +17,17 @@ import {
   getAutoScanStatus,
   deleteScanHistory,
 } from "../api/get-scan-history";
-import type { ScannerConfig, HistoryQueryParams } from "../types";
+import {
+  getSBOMHistory,
+  getSBOMHistoryDetail,
+  getSBOMedImages,
+  deleteSBOMHistory,
+} from "../api/get-sbom-history";
+import type {
+  ScannerConfig,
+  HistoryQueryParams,
+  SBOMHistoryQueryParams,
+} from "../types";
 
 const SCANNER_CONFIG_KEY = ["scannerConfig"] as const;
 
@@ -92,8 +102,13 @@ export function useScanResults(imageRef: string, host: string, enabled = true) {
 }
 
 export function useGenerateSBOM() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (params: GenerateSBOMParams) => generateSBOM(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sbomedImages"] });
+      queryClient.invalidateQueries({ queryKey: ["sbomHistory"] });
+    },
   });
 }
 
@@ -155,6 +170,42 @@ export function useDeleteScanHistory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scanHistory"] });
       queryClient.invalidateQueries({ queryKey: ["scannedImages"] });
+    },
+  });
+}
+
+export function useSBOMHistory(params: SBOMHistoryQueryParams) {
+  return useQuery({
+    queryKey: ["sbomHistory", params],
+    queryFn: () => getSBOMHistory(params),
+    staleTime: 10_000,
+  });
+}
+
+export function useSBOMHistoryDetail(id: string | null) {
+  return useQuery({
+    queryKey: ["sbomHistoryDetail", id],
+    queryFn: () => getSBOMHistoryDetail(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
+export function useSBOMedImages() {
+  return useQuery({
+    queryKey: ["sbomedImages"],
+    queryFn: getSBOMedImages,
+    staleTime: 30_000,
+  });
+}
+
+export function useDeleteSBOMHistory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteSBOMHistory(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sbomHistory"] });
+      queryClient.invalidateQueries({ queryKey: ["sbomedImages"] });
     },
   });
 }

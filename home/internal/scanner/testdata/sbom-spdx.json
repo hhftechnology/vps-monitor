@@ -1,0 +1,26 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "packages": [
+    {
+      "name": "alpine-baselayout",
+      "versionInfo": "3.4.3-r1",
+      "externalRefs": [
+        {
+          "referenceType": "purl",
+          "referenceLocator": "pkg:apk/alpine/alpine-baselayout@3.4.3-r1"
+        }
+      ]
+    },
+    {
+      "name": "busybox",
+      "versionInfo": "1.36.1-r7",
+      "externalRefs": [
+        {
+          "referenceType": "purl",
+          "referenceLocator": "pkg:apk/alpine/busybox@1.36.1-r7"
+        }
+      ]
+    }
+  ]
+}
