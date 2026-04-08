@@ -160,7 +160,10 @@ type ringBuffer struct {
 }
 
 func newRingBuffer(capacity int) *ringBuffer {
-	return &ringBuffer{cap: capacity}
+	if capacity <= 0 {
+		capacity = 1
+	}
+	return &ringBuffer{cap: capacity, buf: make([]byte, 0, capacity)}
 }
 
 func (r *ringBuffer) Write(p []byte) (int, error) {
@@ -168,7 +171,11 @@ func (r *ringBuffer) Write(p []byte) (int, error) {
 	defer r.mu.Unlock()
 	r.buf = append(r.buf, p...)
 	if len(r.buf) > r.cap {
-		r.buf = r.buf[len(r.buf)-r.cap:]
+		// Allocate a fresh r.cap-sized slice and copy the trailing bytes so
+		// the previous (potentially much larger) backing array can be GC'd.
+		newBuf := make([]byte, r.cap)
+		copy(newBuf, r.buf[len(r.buf)-r.cap:])
+		r.buf = newBuf
 	}
 	return len(p), nil
 }
@@ -186,7 +193,7 @@ func streamLogs(rc io.Reader, outPath string, bytes *int64) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 		return "", fmt.Errorf("create out dir: %w", err)
 	}
-	f, err := os.Create(outPath)
+	f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("create out file: %w", err)
 	}

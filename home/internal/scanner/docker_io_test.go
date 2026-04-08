@@ -406,7 +406,7 @@ func TestReadFilePrefix_TrimsWhitespace(t *testing.T) {
 func TestCountingWriter_CountsBytes(t *testing.T) {
 	var buf strings.Builder
 	var n int64
-	cw := &countingWriter{w: &writerAdapter{b: &buf}, n: &n}
+	cw := &countingWriter{w: &buf, n: &n}
 	cw.Write([]byte("hello"))
 	cw.Write([]byte(" world"))
 	if n != 11 {
@@ -420,17 +420,10 @@ func TestCountingWriter_CountsBytes(t *testing.T) {
 func TestCountingWriter_NilCounter(t *testing.T) {
 	// Must not panic when n is nil.
 	var buf strings.Builder
-	cw := &countingWriter{w: &writerAdapter{b: &buf}, n: nil}
+	cw := &countingWriter{w: &buf, n: nil}
 	if _, err := cw.Write([]byte("test")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-}
-
-// writerAdapter adapts strings.Builder to io.Writer.
-type writerAdapter struct{ b *strings.Builder }
-
-func (w *writerAdapter) Write(p []byte) (int, error) {
-	return w.b.Write(p)
 }
 
 // ─── ScannerCacheVolumes constants ───────────────────────────────────────────
@@ -626,7 +619,9 @@ func TestParseTrivyOutputStream_NormalizeSeverity(t *testing.T) {
 
 func TestEnrichParseErrorForEmptyOutput_LongStderrTruncatedTo512(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "empty.json")
-	os.WriteFile(outPath, nil, 0o600)
+	if err := os.WriteFile(outPath, nil, 0o600); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
 
 	longStderr := strings.Repeat("x", 1000)
 	parseErr := fmt.Errorf("wrap: %w", io.EOF)
@@ -645,7 +640,9 @@ func TestEnrichParseErrorForEmptyOutput_LongStderrTruncatedTo512(t *testing.T) {
 
 func TestEnrichParseErrorForEmptyOutput_EmptyStderrTail(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "empty2.json")
-	os.WriteFile(outPath, nil, 0o600)
+	if err := os.WriteFile(outPath, nil, 0o600); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
 
 	parseErr := fmt.Errorf("wrap: %w", io.EOF)
 	err := enrichParseErrorForEmptyOutput("grype", outPath, "", parseErr)

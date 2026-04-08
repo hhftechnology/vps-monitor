@@ -115,7 +115,10 @@ func RunGrypeScan(
 	}
 
 	streamResult := <-streamDone
-	if streamResult.err != nil && exitCode == 0 {
+	// Stream errors must be surfaced regardless of exitCode: grype exits with
+	// code 1 when vulnerabilities are found, so the previous `&& exitCode == 0`
+	// guard let real I/O failures fall through to a misleading JSON parse error.
+	if streamResult.err != nil {
 		return nil, fmt.Errorf("failed to read grype output: %w", streamResult.err)
 	}
 

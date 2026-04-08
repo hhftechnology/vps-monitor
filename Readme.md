@@ -289,7 +289,7 @@ npm run build
 
 ```bash
 docker pull hhftechnology/vps-monitor:latest
-docker run -d -p 6789:6789 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/hhftechnology/vps-monitor:latest
+docker run -d -p 6789:6789 -v /var/run/docker.sock:/var/run/docker.sock hhftechnology/vps-monitor:latest
 ```
 
 ## Configuration

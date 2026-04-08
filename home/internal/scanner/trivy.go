@@ -107,7 +107,10 @@ func RunTrivyScan(
 	}
 
 	streamResult := <-streamDone
-	if streamResult.err != nil && exitCode == 0 {
+	// Surface stream errors as the primary cause before falling through to the
+	// generic exit-code branch — otherwise an underlying I/O failure shows up
+	// as "trivy exited with code N" with no hint of the real problem.
+	if streamResult.err != nil {
 		return nil, fmt.Errorf("failed to read trivy output: %w", streamResult.err)
 	}
 

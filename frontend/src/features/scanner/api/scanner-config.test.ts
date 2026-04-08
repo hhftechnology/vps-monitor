@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ScannerConfig } from "../types";
 import { getScannerConfig, testScanNotification, updateScannerConfig } from "./scanner-config";
 
 vi.mock("@/lib/api-client", () => ({
@@ -27,19 +28,20 @@ function errResponse(status: number, msg: string): Response {
   } as unknown as Response;
 }
 
-const sampleConfig = {
+const sampleConfig: ScannerConfig = {
   grypeImage: "anchore/grype:v0.110.0",
   trivyImage: "aquasec/trivy:0.69.3",
   syftImage: "anchore/syft:v1.27.1",
-  defaultScanner: "grype" as const,
+  defaultScanner: "grype",
   grypeArgs: "",
   trivyArgs: "",
   notifications: {
     onScanComplete: true,
     onBulkComplete: true,
-    minSeverity: "High" as const,
+    onNewCVEs: true,
+    minSeverity: "High",
   },
-  autoScan: { enabled: false, pollInterval: 15 },
+  autoScan: { enabled: false, pollIntervalMinutes: 15 },
   forceRescan: false,
   scanTimeoutMinutes: 20,
   bulkTimeoutMinutes: 120,
@@ -72,7 +74,7 @@ describe("updateScannerConfig", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("sends a PUT request with the config and returns updated config", async () => {
-    const updatedConfig = { ...sampleConfig, defaultScanner: "trivy" as const };
+    const updatedConfig: ScannerConfig = { ...sampleConfig, defaultScanner: "trivy" };
     mockFetch.mockResolvedValueOnce(okResponse({ config: updatedConfig }));
 
     const result = await updateScannerConfig(updatedConfig);

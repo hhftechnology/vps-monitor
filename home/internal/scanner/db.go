@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -578,13 +579,13 @@ func (s *ScanDB) LoadScannerSettings(envCfg *models.ScannerConfig) *models.Scann
 		},
 		AutoScan: models.AutoScanConfig{
 			Enabled:      getSettingWithDefault(dbSettings, "auto_scan_enabled", "false") == "true",
-			PollInterval: parseIntSetting(getSettingWithDefault(dbSettings, "auto_scan_poll_interval", "15")),
+			PollInterval: parseIntSetting(getSettingWithDefault(dbSettings, "auto_scan_poll_interval", "15"), 15),
 		},
 		ForceRescan:        getSettingWithDefault(dbSettings, "force_rescan_enabled", "false") == "true",
-		ScanTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "scan_timeout_minutes", "20")),
-		BulkTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "bulk_timeout_minutes", "120")),
-		ScannerMemoryMB:    parseIntSetting(getSettingWithDefault(dbSettings, "scanner_memory_mb", "2048")),
-		ScannerPidsLimit:   parseIntSetting(getSettingWithDefault(dbSettings, "scanner_pids_limit", "512")),
+		ScanTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "scan_timeout_minutes", "20"), 20),
+		BulkTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "bulk_timeout_minutes", "120"), 120),
+		ScannerMemoryMB:    parseIntSetting(getSettingWithDefault(dbSettings, "scanner_memory_mb", "2048"), 2048),
+		ScannerPidsLimit:   parseIntSetting(getSettingWithDefault(dbSettings, "scanner_pids_limit", "512"), 512),
 	}
 
 	// Apply env overrides (non-empty env values take precedence)
@@ -759,11 +760,13 @@ func getSettingWithDefault(settings map[string]string, key, defaultVal string) s
 	return defaultVal
 }
 
-func parseIntSetting(s string) int {
-	var n int
-	fmt.Sscanf(s, "%d", &n)
-	if n <= 0 {
-		return 15
+// parseIntSetting parses a settings value as a positive int. If the value is
+// missing, malformed, or non-positive, def is returned. The per-setting default
+// must be supplied by the caller — there is no universal fallback.
+func parseIntSetting(s string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return def
 	}
 	return n
 }

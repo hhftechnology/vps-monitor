@@ -513,11 +513,16 @@ func (s *ScannerService) updateJobProgress(job *models.ScanJob, status models.Sc
 	job.Progress = progress
 }
 
-// heartbeat emits a "Scanning... Xs elapsed, Y output" progress line every 5
-// seconds using the live byte counter from the streaming writer. It exits when
-// ctx is cancelled (i.e. when the scan returns).
+// heartbeatTickInterval is the cadence at which heartbeat publishes progress.
+// Exposed as a package variable so tests can shorten it without waiting for the
+// production 5-second cadence; production code never assigns to it.
+var heartbeatTickInterval = 5 * time.Second
+
+// heartbeat emits a "Scanning... Xs elapsed, Y output" progress line every
+// heartbeatTickInterval using the live byte counter from the streaming writer.
+// It exits when ctx is cancelled (i.e. when the scan returns).
 func (s *ScannerService) heartbeat(ctx context.Context, job *models.ScanJob, bytesWritten *int64, started time.Time) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(heartbeatTickInterval)
 	defer ticker.Stop()
 	for {
 		select {

@@ -21,11 +21,12 @@ function makeScannerConfig(overrides: Partial<ScannerConfig> = {}): ScannerConfi
     notifications: {
       onScanComplete: true,
       onBulkComplete: true,
+      onNewCVEs: true,
       minSeverity: "High",
     },
     autoScan: {
       enabled: false,
-      pollInterval: 15,
+      pollIntervalMinutes: 15,
     },
     forceRescan: false,
     scanTimeoutMinutes: 20,
@@ -100,7 +101,9 @@ describe("ScannerConfig resource limit fields", () => {
       scannerPidsLimit: 32768,
     });
     expect(cfg.scanTimeoutMinutes).toBe(9999);
+    expect(cfg.bulkTimeoutMinutes).toBe(9999);
     expect(cfg.scannerMemoryMB).toBe(65536);
+    expect(cfg.scannerPidsLimit).toBe(32768);
   });
 });
 

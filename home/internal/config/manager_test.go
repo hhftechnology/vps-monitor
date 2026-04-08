@@ -692,13 +692,25 @@ func TestUpdateScannerConfigPersistsResourceLimits(t *testing.T) {
 }
 
 // TestNewManagerSetsEnvSnapshotForResourceLimitVars verifies that NewManager
-// recognises the four new resource-limit env vars when deciding whether
-// scanner config comes from the environment.
+// recognises each of the resource-limit env vars when deciding whether
+// scanner config comes from the environment. Each var is exercised in its
+// own subtest so a regression on any single one is reported individually.
 func TestNewManagerSetsEnvSnapshotForResourceLimitVars(t *testing.T) {
-	t.Setenv("SCANNER_TIMEOUT_MINUTES", "30")
+	resourceLimitVars := []string{
+		"SCANNER_TIMEOUT_MINUTES",
+		"SCANNER_BULK_TIMEOUT_MINUTES",
+		"SCANNER_MEMORY_MB",
+		"SCANNER_PIDS_LIMIT",
+	}
 
-	m := NewManager()
-	if !m.envSnapshot.ScannerSet {
-		t.Fatal("expected ScannerSet=true when SCANNER_TIMEOUT_MINUTES is set")
+	for _, varName := range resourceLimitVars {
+		t.Run(varName, func(t *testing.T) {
+			t.Setenv(varName, "1")
+
+			m := NewManager()
+			if !m.envSnapshot.ScannerSet {
+				t.Fatalf("expected ScannerSet=true when %s is set", varName)
+			}
+		})
 	}
 }

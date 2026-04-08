@@ -124,6 +124,15 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 
 	streamResult := <-streamDone
 
+	// Surface stream errors as the primary cause before falling through to the
+	// exit-code branch — otherwise a broken Docker log stream gets reported
+	// only as "syft exited with code N" and the real failure is lost.
+	if streamResult.err != nil {
+		os.Remove(filePath)
+		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to read syft output: %v", streamResult.err))
+		return
+	}
+
 	if exitCode != 0 {
 		tail := streamResult.stderr
 		if tail == "" {
@@ -131,11 +140,6 @@ func (s *ScannerService) runSBOMGeneration(job *models.SBOMJob) {
 		}
 		os.Remove(filePath)
 		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("syft exited with code %d: %s", exitCode, tail))
-		return
-	}
-	if streamResult.err != nil {
-		os.Remove(filePath)
-		s.updateSBOMStatus(job, models.ScanJobFailed, fmt.Sprintf("failed to read syft output: %v", streamResult.err))
 		return
 	}
 

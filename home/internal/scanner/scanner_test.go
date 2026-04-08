@@ -243,6 +243,17 @@ func TestBulkTimeoutDefaultWhenNilConfig(t *testing.T) {
 	}
 }
 
+// TestBulkTimeoutNegativeValueUsesDefault asserts that a negative configured
+// bulk timeout falls back to the same default as zero/nil config — bulkTimeout
+// uses a `> 0` guard, so any non-positive value should yield 120m.
+func TestBulkTimeoutNegativeValueUsesDefault(t *testing.T) {
+	cfg := &models.ScannerConfig{BulkTimeoutMinutes: -10}
+	s := newTestScannerService(cfg)
+	if got := s.bulkTimeout(); got != 120*time.Minute {
+		t.Fatalf("expected default 120m for negative config, got %v", got)
+	}
+}
+
 // ─── scannerLimits ────────────────────────────────────────────────────────────
 
 func TestScannerLimitsUsesConfiguredValues(t *testing.T) {
@@ -333,9 +344,20 @@ func TestHumanBytesGigabytes(t *testing.T) {
 
 // ─── heartbeat ───────────────────────────────────────────────────────────────
 
+// withShortHeartbeatInterval temporarily overrides the package-level heartbeat
+// ticker cadence for the duration of the test, restoring the original on exit.
+func withShortHeartbeatInterval(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := heartbeatTickInterval
+	heartbeatTickInterval = d
+	t.Cleanup(func() { heartbeatTickInterval = prev })
+}
+
 // TestHeartbeatUpdatesJobProgress verifies that the heartbeat goroutine updates
-// the job's Progress field while the scan is still running.
+// the job's Progress field at least once before the context is cancelled.
 func TestHeartbeatUpdatesJobProgress(t *testing.T) {
+	withShortHeartbeatInterval(t, 5*time.Millisecond)
+
 	s := newTestScannerService(&models.ScannerConfig{})
 
 	job := &models.ScanJob{Status: models.ScanJobScanning}
@@ -345,38 +367,62 @@ func TestHeartbeatUpdatesJobProgress(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Use a ticker period override isn't possible, so we rely on the real
-	// 5-second ticker. Instead we just exercise the cancel path directly
-	// after a brief run.
 	done := make(chan struct{})
 	go func() {
 		s.heartbeat(ctx, job, &bytesWritten, time.Now().Add(-10*time.Second))
 		close(done)
 	}()
 
-	// Cancel promptly and confirm the goroutine exits.
+	// Wait long enough for at least one ticker fire, then cancel and confirm exit.
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("heartbeat did not exit after context cancel")
 	}
+
+	s.mu.Lock()
+	progress := job.Progress
+	s.mu.Unlock()
+	if progress == "" {
+		t.Fatal("expected heartbeat to update job.Progress, got empty string")
+	}
 }
 
 // TestHeartbeatDoesNotOverwriteNonScanningStatus verifies that heartbeat leaves
-// the Progress field alone once the job transitions out of ScanJobScanning.
+// the Progress field alone once the job has transitioned out of ScanJobScanning,
+// even when the ticker fires.
 func TestHeartbeatDoesNotOverwriteNonScanningStatus(t *testing.T) {
+	withShortHeartbeatInterval(t, 5*time.Millisecond)
+
 	s := newTestScannerService(&models.ScannerConfig{})
 
 	job := &models.ScanJob{Status: models.ScanJobComplete, Progress: "original"}
 	var bytesWritten int64
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
+	defer cancel()
 
-	s.heartbeat(ctx, job, &bytesWritten, time.Now())
+	done := make(chan struct{})
+	go func() {
+		s.heartbeat(ctx, job, &bytesWritten, time.Now())
+		close(done)
+	}()
 
-	if job.Progress != "original" {
-		t.Fatalf("expected progress to remain 'original', got %q", job.Progress)
+	// Let the ticker fire several times against the non-scanning status.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("heartbeat did not exit after context cancel")
+	}
+
+	s.mu.Lock()
+	progress := job.Progress
+	s.mu.Unlock()
+	if progress != "original" {
+		t.Fatalf("expected progress to remain 'original', got %q", progress)
 	}
 }
