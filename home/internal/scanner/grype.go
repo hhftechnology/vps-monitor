@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/google/shlex"
 	"github.com/hhftechnology/vps-monitor/internal/models"
@@ -25,11 +25,11 @@ type grypeMatch struct {
 }
 
 type grypeVulnerability struct {
-	ID          string          `json:"id"`
-	Severity    string          `json:"severity"`
-	Description string          `json:"description"`
-	DataSource  string          `json:"dataSource"`
-	Fix         grypeFixInfo    `json:"fix"`
+	ID          string       `json:"id"`
+	Severity    string       `json:"severity"`
+	Description string       `json:"description"`
+	DataSource  string       `json:"dataSource"`
+	Fix         grypeFixInfo `json:"fix"`
 }
 
 type grypeFixInfo struct {
@@ -43,74 +43,105 @@ type grypeArtifact struct {
 }
 
 // RunGrypeScan runs a Grype vulnerability scan against an image using Docker.
-func RunGrypeScan(ctx context.Context, dockerClient *client.Client, scannerImage, imageRef, args string, onProgress func(string)) ([]models.Vulnerability, error) {
-	// Pull the scanner image
+// Stdout is streamed directly to disk to keep the backend RSS flat regardless
+// of how many vulnerabilities are reported.
+func RunGrypeScan(
+	ctx context.Context,
+	dockerClient *client.Client,
+	scannerImage, imageRef, args, jobID string,
+	limits ScannerLimits,
+	bytesWritten *int64,
+	onProgress func(string),
+) ([]models.Vulnerability, error) {
 	if onProgress != nil {
 		onProgress("Pulling scanner image " + scannerImage + "...")
 	}
-	pullReader, err := dockerClient.ImagePull(ctx, scannerImage, image.PullOptions{})
-	if err != nil {
+	if err := PullImageWithProgress(ctx, dockerClient, scannerImage, onProgress); err != nil {
 		return nil, fmt.Errorf("failed to pull grype image: %w", err)
 	}
-	io.Copy(io.Discard, pullReader)
-	pullReader.Close()
 
-	// Build the command
+	if err := EnsureCacheVolume(ctx, dockerClient, ScannerCacheVolumes[ScannerKindGrype].Name); err != nil {
+		return nil, err
+	}
+
 	cmd := buildGrypeCmd(imageRef, args)
 
 	if onProgress != nil {
 		onProgress("Scanning " + imageRef + " with Grype...")
 	}
 
-	// Create and start scanner container
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
 		Image: scannerImage,
 		Cmd:   cmd,
-	}, &container.HostConfig{
-		Binds: []string{"/var/run/docker.sock:/var/run/docker.sock"},
-	}, nil, nil, "")
+	}, BuildScannerHostConfig(ScannerKindGrype, limits), nil, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create grype container: %w", err)
 	}
 	containerID := resp.ID
-	defer dockerClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
 
 	if err := dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		return nil, fmt.Errorf("failed to start grype container: %w", err)
 	}
 
-	// Wait for completion
+	outPath := TempScanFile(jobID)
+	defer os.Remove(outPath)
+
+	// Stream logs concurrently with the wait so the file is fully populated by
+	// the time the container exits — Docker holds them in memory otherwise.
+	streamDone := make(chan struct {
+		stderr string
+		err    error
+	}, 1)
+	go func() {
+		stderr, err := StreamContainerStdoutToFile(ctx, dockerClient, containerID, outPath, bytesWritten)
+		streamDone <- struct {
+			stderr string
+			err    error
+		}{stderr, err}
+	}()
+
 	statusCh, errCh := dockerClient.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	var exitCode int64
 	select {
 	case err := <-errCh:
 		if err != nil {
 			return nil, fmt.Errorf("error waiting for grype container: %w", err)
 		}
 	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			// Grype exits with code 1 when vulnerabilities are found - that's expected
-			if status.StatusCode != 1 {
-				logs, _ := getContainerLogs(ctx, dockerClient, containerID)
-				return nil, fmt.Errorf("grype exited with code %d: %s", status.StatusCode, logs)
-			}
-		}
+		exitCode = status.StatusCode
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 
-	// Read stdout for JSON output
-	logReader, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		return nil, fmt.Errorf("failed to read grype output: %w", err)
-	}
-	defer logReader.Close()
-
-	output, err := demuxDockerLogs(logReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read grype output: %w", err)
+	streamResult := <-streamDone
+	// Stream errors must be surfaced regardless of exitCode: grype exits with
+	// code 1 when vulnerabilities are found, so the previous `&& exitCode == 0`
+	// guard let real I/O failures fall through to a misleading JSON parse error.
+	if streamResult.err != nil {
+		return nil, fmt.Errorf("failed to read grype output: %w", streamResult.err)
 	}
 
-	return parseGrypeOutput(output)
+	// Grype exits with code 1 when vulnerabilities are found — that's expected.
+	if exitCode != 0 && exitCode != 1 {
+		tail := streamResult.stderr
+		if tail == "" {
+			tail = readFilePrefix(outPath, 2*1024)
+		}
+		return nil, fmt.Errorf("grype exited with code %d: %s", exitCode, tail)
+	}
+
+	f, err := os.Open(outPath)
+	if err != nil {
+		return nil, fmt.Errorf("open grype output: %w", err)
+	}
+	defer f.Close()
+
+	vulns, err := parseGrypeOutputStream(f)
+	if err != nil {
+		return nil, enrichParseErrorForEmptyOutput("grype", outPath, streamResult.stderr, err)
+	}
+	return vulns, nil
 }
 
 // buildGrypeCmd constructs the command for Grype.
@@ -126,10 +157,10 @@ func buildGrypeCmd(imageRef, args string) []string {
 	return []string{imageRef, "-o", "json"}
 }
 
-// parseGrypeOutput parses Grype JSON output into vulnerabilities.
-func parseGrypeOutput(data []byte) ([]models.Vulnerability, error) {
+// parseGrypeOutputStream stream-decodes Grype JSON into vulnerabilities.
+func parseGrypeOutputStream(r io.Reader) ([]models.Vulnerability, error) {
 	var output grypeOutput
-	if err := json.Unmarshal(data, &output); err != nil {
+	if err := json.NewDecoder(r).Decode(&output); err != nil {
 		return nil, fmt.Errorf("failed to parse grype output: %w", err)
 	}
 
@@ -154,20 +185,6 @@ func parseGrypeOutput(data []byte) ([]models.Vulnerability, error) {
 	return vulns, nil
 }
 
-// getContainerLogs reads stderr from a container for error reporting.
-func getContainerLogs(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
-	reader, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{ShowStderr: true})
-	if err != nil {
-		return "", err
-	}
-	defer reader.Close()
-	data, err := demuxDockerLogs(reader)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
 // normalizeSeverity normalizes severity strings from scanners.
 func normalizeSeverity(severity string) models.SeverityLevel {
 	switch strings.ToLower(severity) {
@@ -184,40 +201,4 @@ func normalizeSeverity(severity string) models.SeverityLevel {
 	default:
 		return models.SeverityUnknown
 	}
-}
-
-// demuxDockerLogs reads Docker multiplexed log output and returns the raw content.
-func demuxDockerLogs(reader io.Reader) ([]byte, error) {
-	// Docker container logs use a multiplexed format with an 8-byte header per frame.
-	// Header: [1 byte stream type][3 bytes padding][4 bytes uint32 big-endian size]
-	var result []byte
-	header := make([]byte, 8)
-
-	for {
-		_, err := io.ReadFull(reader, header)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return result, err
-		}
-
-		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
-		if size == 0 {
-			continue
-		}
-
-		frame := make([]byte, size)
-		_, err = io.ReadFull(reader, frame)
-		if err != nil {
-			return result, err
-		}
-
-		// Only capture stdout (stream type 1)
-		if header[0] == 1 {
-			result = append(result, frame...)
-		}
-	}
-
-	return result, nil
 }

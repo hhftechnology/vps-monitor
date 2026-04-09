@@ -1,0 +1,19 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "type": "library",
+      "name": "alpine-baselayout",
+      "version": "3.4.3-r1",
+      "purl": "pkg:apk/alpine/alpine-baselayout@3.4.3-r1"
+    },
+    {
+      "type": "library",
+      "name": "busybox",
+      "version": "1.36.1-r7",
+      "purl": "pkg:apk/alpine/busybox@1.36.1-r7"
+    }
+  ]
+}

@@ -1,7 +1,11 @@
 package scanner
 
 import (
+	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/models"
 )
@@ -168,5 +172,290 @@ func TestContainsHostExactMatch(t *testing.T) {
 	// Ensure no partial matching
 	if containsHost([]string{"host-abc"}, "host") {
 		t.Fatal("containsHost must not do partial matching")
+	}
+}
+
+// ─── Helper: minimal ScannerService without Docker ───────────────────────────
+
+// newTestScannerService creates a ScannerService backed by the supplied config
+// without requiring a registry or database (the timeout/limits helpers only
+// access the config).
+func newTestScannerService(cfg *models.ScannerConfig) *ScannerService {
+	s := &ScannerService{}
+	s.config.Store(cfg)
+	return s
+}
+
+// ─── scanTimeout ─────────────────────────────────────────────────────────────
+
+func TestScanTimeoutUsesConfiguredValue(t *testing.T) {
+	cfg := &models.ScannerConfig{ScanTimeoutMinutes: 45}
+	s := newTestScannerService(cfg)
+	if got := s.scanTimeout(); got != 45*time.Minute {
+		t.Fatalf("expected 45m, got %v", got)
+	}
+}
+
+func TestScanTimeoutDefaultWhenZero(t *testing.T) {
+	cfg := &models.ScannerConfig{ScanTimeoutMinutes: 0}
+	s := newTestScannerService(cfg)
+	if got := s.scanTimeout(); got != 20*time.Minute {
+		t.Fatalf("expected default 20m, got %v", got)
+	}
+}
+
+func TestScanTimeoutDefaultWhenNilConfig(t *testing.T) {
+	s := &ScannerService{} // config is nil pointer (zero atomic.Pointer)
+	if got := s.scanTimeout(); got != 20*time.Minute {
+		t.Fatalf("expected default 20m for nil config, got %v", got)
+	}
+}
+
+func TestScanTimeoutNegativeValueUsesDefault(t *testing.T) {
+	cfg := &models.ScannerConfig{ScanTimeoutMinutes: -10}
+	s := newTestScannerService(cfg)
+	if got := s.scanTimeout(); got != 20*time.Minute {
+		t.Fatalf("expected default 20m for negative value, got %v", got)
+	}
+}
+
+// ─── bulkTimeout ─────────────────────────────────────────────────────────────
+
+func TestBulkTimeoutUsesConfiguredValue(t *testing.T) {
+	cfg := &models.ScannerConfig{BulkTimeoutMinutes: 240}
+	s := newTestScannerService(cfg)
+	if got := s.bulkTimeout(); got != 240*time.Minute {
+		t.Fatalf("expected 240m, got %v", got)
+	}
+}
+
+func TestBulkTimeoutDefaultWhenZero(t *testing.T) {
+	cfg := &models.ScannerConfig{BulkTimeoutMinutes: 0}
+	s := newTestScannerService(cfg)
+	if got := s.bulkTimeout(); got != 120*time.Minute {
+		t.Fatalf("expected default 120m, got %v", got)
+	}
+}
+
+func TestBulkTimeoutDefaultWhenNilConfig(t *testing.T) {
+	s := &ScannerService{}
+	if got := s.bulkTimeout(); got != 120*time.Minute {
+		t.Fatalf("expected default 120m for nil config, got %v", got)
+	}
+}
+
+// TestBulkTimeoutNegativeValueUsesDefault asserts that a negative configured
+// bulk timeout falls back to the same default as zero/nil config — bulkTimeout
+// uses a `> 0` guard, so any non-positive value should yield 120m.
+func TestBulkTimeoutNegativeValueUsesDefault(t *testing.T) {
+	cfg := &models.ScannerConfig{BulkTimeoutMinutes: -10}
+	s := newTestScannerService(cfg)
+	if got := s.bulkTimeout(); got != 120*time.Minute {
+		t.Fatalf("expected default 120m for negative config, got %v", got)
+	}
+}
+
+// ─── scannerLimits ────────────────────────────────────────────────────────────
+
+func TestScannerLimitsUsesConfiguredValues(t *testing.T) {
+	cfg := &models.ScannerConfig{ScannerMemoryMB: 4096, ScannerPidsLimit: 1024}
+	s := newTestScannerService(cfg)
+	limits := s.scannerLimits()
+	if limits.MemoryBytes != 4096*1024*1024 {
+		t.Fatalf("expected MemoryBytes=%d, got %d", int64(4096*1024*1024), limits.MemoryBytes)
+	}
+	if limits.PidsLimit != 1024 {
+		t.Fatalf("expected PidsLimit=1024, got %d", limits.PidsLimit)
+	}
+}
+
+func TestScannerLimitsDefaultsWhenZero(t *testing.T) {
+	cfg := &models.ScannerConfig{ScannerMemoryMB: 0, ScannerPidsLimit: 0}
+	s := newTestScannerService(cfg)
+	limits := s.scannerLimits()
+	if limits.MemoryBytes != 2048*1024*1024 {
+		t.Fatalf("expected default MemoryBytes=%d, got %d", int64(2048*1024*1024), limits.MemoryBytes)
+	}
+	if limits.PidsLimit != 512 {
+		t.Fatalf("expected default PidsLimit=512, got %d", limits.PidsLimit)
+	}
+}
+
+func TestScannerLimitsDefaultsWhenNilConfig(t *testing.T) {
+	s := &ScannerService{}
+	limits := s.scannerLimits()
+	if limits.MemoryBytes != 2048*1024*1024 {
+		t.Fatalf("expected default MemoryBytes for nil config, got %d", limits.MemoryBytes)
+	}
+	if limits.PidsLimit != 512 {
+		t.Fatalf("expected default PidsLimit=512 for nil config, got %d", limits.PidsLimit)
+	}
+}
+
+func TestScannerLimitsMemoryConversion(t *testing.T) {
+	// Verify MB-to-bytes multiplication: 1 MB → 1 048 576 bytes
+	cfg := &models.ScannerConfig{ScannerMemoryMB: 1, ScannerPidsLimit: 1}
+	s := newTestScannerService(cfg)
+	if got := s.scannerLimits().MemoryBytes; got != 1024*1024 {
+		t.Fatalf("1 MB should be %d bytes, got %d", 1024*1024, got)
+	}
+}
+
+// ─── humanBytes ──────────────────────────────────────────────────────────────
+
+func TestHumanBytesBytes(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"},
+		{1, "1 B"},
+		{1023, "1023 B"},
+	}
+	for _, c := range cases {
+		if got := humanBytes(c.n); got != c.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}
+
+func TestHumanBytesKilobytes(t *testing.T) {
+	if got := humanBytes(1024); got != "1.0 KB" {
+		t.Fatalf("expected '1.0 KB', got %q", got)
+	}
+	if got := humanBytes(2048); got != "2.0 KB" {
+		t.Fatalf("expected '2.0 KB', got %q", got)
+	}
+}
+
+func TestHumanBytesMegabytes(t *testing.T) {
+	if got := humanBytes(1024 * 1024); got != "1.0 MB" {
+		t.Fatalf("expected '1.0 MB', got %q", got)
+	}
+	if got := humanBytes(512 * 1024 * 1024); got != "512.0 MB" {
+		t.Fatalf("expected '512.0 MB', got %q", got)
+	}
+}
+
+func TestHumanBytesGigabytes(t *testing.T) {
+	if got := humanBytes(1024 * 1024 * 1024); got != "1.0 GB" {
+		t.Fatalf("expected '1.0 GB', got %q", got)
+	}
+}
+
+// ─── heartbeat ───────────────────────────────────────────────────────────────
+
+// withShortHeartbeatInterval temporarily overrides the package-level heartbeat
+// ticker cadence for the duration of the test, restoring the original on exit.
+func withShortHeartbeatInterval(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := heartbeatTickInterval
+	heartbeatTickInterval = d
+	t.Cleanup(func() { heartbeatTickInterval = prev })
+}
+
+// TestHeartbeatUpdatesJobProgress verifies that the heartbeat goroutine updates
+// the job's Progress field at least once before the context is cancelled.
+func TestHeartbeatUpdatesJobProgress(t *testing.T) {
+	withShortHeartbeatInterval(t, 5*time.Millisecond)
+
+	s := newTestScannerService(&models.ScannerConfig{})
+
+	job := &models.ScanJob{Status: models.ScanJobScanning}
+	var bytesWritten int64
+	atomic.StoreInt64(&bytesWritten, 1536) // 1.5 KB
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.heartbeat(ctx, job, &bytesWritten, time.Now().Add(-10*time.Second))
+		close(done)
+	}()
+
+	// Wait long enough for at least one ticker fire, then cancel and confirm exit.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("heartbeat did not exit after context cancel")
+	}
+
+	s.mu.Lock()
+	progress := job.Progress
+	s.mu.Unlock()
+	if progress == "" {
+		t.Fatal("expected heartbeat to update job.Progress, got empty string")
+	}
+}
+
+// TestHeartbeatDoesNotOverwriteNonScanningStatus verifies that heartbeat leaves
+// the Progress field alone once the job has transitioned out of ScanJobScanning,
+// even when the ticker fires.
+func TestHeartbeatDoesNotOverwriteNonScanningStatus(t *testing.T) {
+	withShortHeartbeatInterval(t, 5*time.Millisecond)
+
+	s := newTestScannerService(&models.ScannerConfig{})
+
+	job := &models.ScanJob{Status: models.ScanJobComplete, Progress: "original"}
+	var bytesWritten int64
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.heartbeat(ctx, job, &bytesWritten, time.Now())
+		close(done)
+	}()
+
+	// Let the ticker fire several times against the non-scanning status.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("heartbeat did not exit after context cancel")
+	}
+
+	s.mu.Lock()
+	progress := job.Progress
+	s.mu.Unlock()
+	if progress != "original" {
+		t.Fatalf("expected progress to remain 'original', got %q", progress)
+	}
+}
+
+// ─── classifyScanFailure ──────────────────────────────────────────────────────
+
+func TestClassifyScanFailureDeadlineExceededIsFailed(t *testing.T) {
+	status, msg := classifyScanFailure(context.DeadlineExceeded, errors.New("scan runner error"))
+	if status != models.ScanJobFailed {
+		t.Fatalf("expected status %q, got %q", models.ScanJobFailed, status)
+	}
+	if msg != "scan timed out" {
+		t.Fatalf("expected timeout message, got %q", msg)
+	}
+}
+
+func TestClassifyScanFailureCanceledIsCancelled(t *testing.T) {
+	status, msg := classifyScanFailure(context.Canceled, errors.New("scan runner error"))
+	if status != models.ScanJobCancelled {
+		t.Fatalf("expected status %q, got %q", models.ScanJobCancelled, status)
+	}
+	if msg != "scan cancelled" {
+		t.Fatalf("expected cancellation message, got %q", msg)
+	}
+}
+
+func TestClassifyScanFailureNoContextUsesScanError(t *testing.T) {
+	status, msg := classifyScanFailure(nil, errors.New("scanner exploded"))
+	if status != models.ScanJobFailed {
+		t.Fatalf("expected status %q, got %q", models.ScanJobFailed, status)
+	}
+	if msg != "scanner exploded" {
+		t.Fatalf("expected scanner error message, got %q", msg)
 	}
 }

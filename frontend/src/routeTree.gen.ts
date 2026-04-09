@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as StatsIndexRouteImport } from './routes/stats/index'
 import { Route as ScanHistoryIndexRouteImport } from './routes/scan-history/index'
+import { Route as SbomHistoryIndexRouteImport } from './routes/sbom-history/index'
 import { Route as NetworksIndexRouteImport } from './routes/networks/index'
 import { Route as ImagesIndexRouteImport } from './routes/images/index'
 import { Route as AlertsIndexRouteImport } from './routes/alerts/index'
@@ -43,6 +44,11 @@ const StatsIndexRoute = StatsIndexRouteImport.update({
 const ScanHistoryIndexRoute = ScanHistoryIndexRouteImport.update({
   id: '/scan-history/',
   path: '/scan-history/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SbomHistoryIndexRoute = SbomHistoryIndexRouteImport.update({
+  id: '/sbom-history/',
+  path: '/sbom-history/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NetworksIndexRoute = NetworksIndexRouteImport.update({
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/images': typeof ImagesIndexRoute
   '/networks': typeof NetworksIndexRoute
   '/scan-history': typeof ScanHistoryIndexRoute
+  '/sbom-history': typeof SbomHistoryIndexRoute
   '/stats': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
@@ -93,6 +100,7 @@ export interface FileRoutesByTo {
   '/images': typeof ImagesIndexRoute
   '/networks': typeof NetworksIndexRoute
   '/scan-history': typeof ScanHistoryIndexRoute
+  '/sbom-history': typeof SbomHistoryIndexRoute
   '/stats': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
@@ -106,6 +114,7 @@ export interface FileRoutesById {
   '/images/': typeof ImagesIndexRoute
   '/networks/': typeof NetworksIndexRoute
   '/scan-history/': typeof ScanHistoryIndexRoute
+  '/sbom-history/': typeof SbomHistoryIndexRoute
   '/stats/': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
@@ -120,6 +129,7 @@ export interface FileRouteTypes {
     | '/images'
     | '/networks'
     | '/scan-history'
+    | '/sbom-history'
     | '/stats'
     | '/containers/$containerId/logs'
   fileRoutesByTo: FileRoutesByTo
@@ -132,6 +142,7 @@ export interface FileRouteTypes {
     | '/images'
     | '/networks'
     | '/scan-history'
+    | '/sbom-history'
     | '/stats'
     | '/containers/$containerId/logs'
   id:
@@ -144,6 +155,7 @@ export interface FileRouteTypes {
     | '/images/'
     | '/networks/'
     | '/scan-history/'
+    | '/sbom-history/'
     | '/stats/'
     | '/containers/$containerId/logs'
   fileRoutesById: FileRoutesById
@@ -157,6 +169,7 @@ export interface RootRouteChildren {
   ImagesIndexRoute: typeof ImagesIndexRoute
   NetworksIndexRoute: typeof NetworksIndexRoute
   ScanHistoryIndexRoute: typeof ScanHistoryIndexRoute
+  SbomHistoryIndexRoute: typeof SbomHistoryIndexRoute
   StatsIndexRoute: typeof StatsIndexRoute
   ContainersContainerIdLogsRoute: typeof ContainersContainerIdLogsRoute
 }
@@ -196,6 +209,13 @@ declare module '@tanstack/react-router' {
       path: '/scan-history'
       fullPath: '/scan-history'
       preLoaderRoute: typeof ScanHistoryIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sbom-history/': {
+      id: '/sbom-history/'
+      path: '/sbom-history'
+      fullPath: '/sbom-history'
+      preLoaderRoute: typeof SbomHistoryIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/networks/': {
@@ -245,6 +265,7 @@ const rootRouteChildren: RootRouteChildren = {
   ImagesIndexRoute: ImagesIndexRoute,
   NetworksIndexRoute: NetworksIndexRoute,
   ScanHistoryIndexRoute: ScanHistoryIndexRoute,
+  SbomHistoryIndexRoute: SbomHistoryIndexRoute,
   StatsIndexRoute: StatsIndexRoute,
   ContainersContainerIdLogsRoute: ContainersContainerIdLogsRoute,
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +58,46 @@ type ImageScanState struct {
 	LastScanID string `json:"last_scan_id"`
 }
 
+// SBOMHistoryQuery defines parameters for querying persisted SBOM history.
+type SBOMHistoryQuery struct {
+	ImageRef  string `json:"image,omitempty"`
+	Host      string `json:"host,omitempty"`
+	Format    string `json:"format,omitempty"`
+	StartDate int64  `json:"start_date,omitempty"`
+	EndDate   int64  `json:"end_date,omitempty"`
+	Page      int    `json:"page,omitempty"`
+	PageSize  int    `json:"page_size,omitempty"`
+	SortBy    string `json:"sort_by,omitempty"`
+	SortDir   string `json:"sort_dir,omitempty"`
+}
+
+// SBOMHistoryPage holds paginated SBOM history results.
+type SBOMHistoryPage struct {
+	Results    []models.SBOMResult `json:"results"`
+	Total      int                 `json:"total"`
+	Page       int                 `json:"page"`
+	PageSize   int                 `json:"page_size"`
+	TotalPages int                 `json:"total_pages"`
+}
+
+// SBOMedImage represents a distinct image+host pair with generated SBOM count.
+type SBOMedImage struct {
+	ImageRef   string `json:"image_ref"`
+	Host       string `json:"host"`
+	SBOMCount  int    `json:"sbom_count"`
+	LastSBOMAt int64  `json:"last_sbom_at"`
+}
+
+// ImageSBOMState tracks the last known image ID for SBOM rescan gating.
+type ImageSBOMState struct {
+	Host       string `json:"host"`
+	ImageRef   string `json:"image_ref"`
+	Format     string `json:"format"`
+	ImageID    string `json:"image_id"`
+	LastSBOMAt int64  `json:"last_sbom_at"`
+	LastSBOMID string `json:"last_sbom_id"`
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS scan_results (
     id              TEXT PRIMARY KEY,
@@ -104,6 +145,45 @@ CREATE TABLE IF NOT EXISTS image_scan_state (
     PRIMARY KEY (host, image_ref)
 );
 
+CREATE TABLE IF NOT EXISTS sbom_results (
+    id              TEXT PRIMARY KEY,
+    image_ref       TEXT NOT NULL,
+    host            TEXT NOT NULL,
+    format          TEXT NOT NULL,
+    component_count INTEGER NOT NULL DEFAULT 0,
+    file_size       INTEGER NOT NULL DEFAULT 0,
+    file_path       TEXT NOT NULL,
+    started_at      INTEGER NOT NULL,
+    completed_at    INTEGER NOT NULL,
+    duration_ms     INTEGER NOT NULL,
+    error           TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sbomr_image_host ON sbom_results(image_ref, host);
+CREATE INDEX IF NOT EXISTS idx_sbomr_completed ON sbom_results(completed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sbomr_host ON sbom_results(host);
+
+CREATE TABLE IF NOT EXISTS sbom_components (
+    sbom_result_id TEXT NOT NULL REFERENCES sbom_results(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    version        TEXT NOT NULL DEFAULT '',
+    type           TEXT NOT NULL DEFAULT '',
+    purl           TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_sbomc_result ON sbom_components(sbom_result_id);
+
+CREATE TABLE IF NOT EXISTS image_sbom_state (
+    host         TEXT NOT NULL,
+    image_ref    TEXT NOT NULL,
+    format       TEXT NOT NULL DEFAULT '',
+    image_id     TEXT NOT NULL,
+    last_sbom_at INTEGER NOT NULL DEFAULT 0,
+    last_sbom_id TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (host, image_ref, format)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
@@ -120,7 +200,7 @@ func NewScanDB(dbPath string) (*ScanDB, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open scan database: %w", err)
 	}
@@ -128,7 +208,6 @@ func NewScanDB(dbPath string) (*ScanDB, error) {
 	// Set PRAGMAs for performance and correctness
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA foreign_keys=ON",
 		"PRAGMA busy_timeout=5000",
 	}
 	for _, p := range pragmas {
@@ -143,12 +222,83 @@ func NewScanDB(dbPath string) (*ScanDB, error) {
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
-	return &ScanDB{db: db}, nil
+	scanDB := &ScanDB{db: db}
+	if err := scanDB.migrateImageSBOMStateTable(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate image_sbom_state table: %w", err)
+	}
+
+	return scanDB, nil
 }
 
 // Close closes the database connection.
 func (s *ScanDB) Close() error {
 	return s.db.Close()
+}
+
+func (s *ScanDB) migrateImageSBOMStateTable() error {
+	rows, err := s.db.Query(`PRAGMA table_info(image_sbom_state)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasFormat := false
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return err
+		}
+		if name == "format" {
+			hasFormat = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasFormat {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`CREATE TABLE image_sbom_state_new (
+		host         TEXT NOT NULL,
+		image_ref    TEXT NOT NULL,
+		format       TEXT NOT NULL DEFAULT '',
+		image_id     TEXT NOT NULL,
+		last_sbom_at INTEGER NOT NULL DEFAULT 0,
+		last_sbom_id TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (host, image_ref, format)
+	)`); err != nil {
+		return fmt.Errorf("create image_sbom_state_new: %w", err)
+	}
+
+	if _, err := tx.Exec(`INSERT INTO image_sbom_state_new (host, image_ref, format, image_id, last_sbom_at, last_sbom_id)
+		SELECT host, image_ref, '', image_id, last_sbom_at, last_sbom_id
+		FROM image_sbom_state`); err != nil {
+		return fmt.Errorf("copy image_sbom_state rows: %w", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE image_sbom_state`); err != nil {
+		return fmt.Errorf("drop legacy image_sbom_state: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE image_sbom_state_new RENAME TO image_sbom_state`); err != nil {
+		return fmt.Errorf("rename image_sbom_state_new: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // InsertResult inserts a scan result and its vulnerabilities in a single transaction.
@@ -292,6 +442,120 @@ func (s *ScanDB) DeleteScanResult(id string) error {
 	return err
 }
 
+// InsertSBOMResult inserts a persisted SBOM result, its components, and image state.
+func (s *ScanDB) InsertSBOMResult(result models.SBOMResult, imageID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`INSERT INTO sbom_results
+		(id, image_ref, host, format, component_count, file_size, file_path,
+		 started_at, completed_at, duration_ms, error, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		result.ID, result.ImageRef, result.Host, string(result.Format), result.ComponentCount, result.FileSize,
+		result.FilePath, result.StartedAt, result.CompletedAt, result.DurationMs, result.Error, time.Now().Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("insert sbom_results: %w", err)
+	}
+
+	if len(result.Components) > 0 {
+		stmt, err := tx.Prepare(`INSERT INTO sbom_components
+			(sbom_result_id, name, version, type, purl)
+			VALUES (?, ?, ?, ?, ?)`)
+		if err != nil {
+			return fmt.Errorf("prepare sbom component insert: %w", err)
+		}
+		defer stmt.Close()
+
+		for _, component := range result.Components {
+			_, err = stmt.Exec(result.ID, component.Name, component.Version, component.Type, component.PURL)
+			if err != nil {
+				return fmt.Errorf("insert sbom component %q: %w", component.Name, err)
+			}
+		}
+	}
+
+	_, err = tx.Exec(`INSERT INTO image_sbom_state (host, image_ref, format, image_id, last_sbom_at, last_sbom_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host, image_ref, format) DO UPDATE SET
+			image_id = excluded.image_id,
+			last_sbom_at = excluded.last_sbom_at,
+			last_sbom_id = excluded.last_sbom_id`,
+		result.Host, result.ImageRef, result.Format, imageID, result.CompletedAt, result.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert image_sbom_state: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// GetSBOMResultByID returns a full SBOM result with normalized components.
+func (s *ScanDB) GetSBOMResultByID(id string) (*models.SBOMResult, error) {
+	row := s.db.QueryRow(`SELECT id, image_ref, host, format, component_count, file_size, file_path,
+		started_at, completed_at, duration_ms, error
+		FROM sbom_results WHERE id = ?`, id)
+
+	result, err := sbomResultFromRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result.Components, err = s.loadSBOMComponents(result.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// GetLatestSBOMResult returns the most recent persisted SBOM for an image on a host.
+func (s *ScanDB) GetLatestSBOMResult(host, imageRef string) (*models.SBOMResult, error) {
+	row := s.db.QueryRow(`SELECT id, image_ref, host, format, component_count, file_size, file_path,
+		started_at, completed_at, duration_ms, error
+		FROM sbom_results WHERE host = ? AND image_ref = ?
+		ORDER BY completed_at DESC LIMIT 1`, host, imageRef)
+
+	result, err := sbomResultFromRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result.Components, err = s.loadSBOMComponents(result.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DeleteSBOMResult removes a persisted SBOM result and cascaded components by ID.
+func (s *ScanDB) DeleteSBOMResult(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM sbom_results WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete sbom_results: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM image_sbom_state WHERE last_sbom_id = ?`, id); err != nil {
+		return fmt.Errorf("delete image_sbom_state: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // GetPreviousResult returns the scan result immediately before the given scan ID
 // for the same image and host.
 func (s *ScanDB) GetPreviousResult(host, imageRef, beforeID string) (*models.ScanResult, error) {
@@ -400,6 +664,74 @@ func (s *ScanDB) QueryHistory(params HistoryQuery) (*HistoryPage, error) {
 	}, nil
 }
 
+// QuerySBOMHistory returns paginated SBOM history without loading component rows.
+func (s *ScanDB) QuerySBOMHistory(params SBOMHistoryQuery) (*SBOMHistoryPage, error) {
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.PageSize < 1 || params.PageSize > 100 {
+		params.PageSize = 20
+	}
+
+	sortColumnMap := map[string]string{
+		"completed_at":    "completed_at",
+		"component_count": "component_count",
+	}
+	sortColumn := sortColumnMap[params.SortBy]
+	if sortColumn == "" {
+		sortColumn = "completed_at"
+	}
+	sortDir := "DESC"
+	if params.SortDir == "asc" {
+		sortDir = "ASC"
+	}
+
+	where, args := buildSBOMHistoryWhere(params)
+
+	var total int
+	countQuery := "SELECT COUNT(*) FROM sbom_results" + where
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count sbom history: %w", err)
+	}
+
+	totalPages := (total + params.PageSize - 1) / params.PageSize
+	offset := (params.Page - 1) * params.PageSize
+
+	query := "SELECT id, image_ref, host, format, component_count, file_size, file_path," +
+		" started_at, completed_at, duration_ms, error" +
+		" FROM sbom_results" + where +
+		" ORDER BY " + sortColumn + " " + sortDir +
+		" LIMIT ? OFFSET ?"
+
+	args = append(args, params.PageSize, offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sbom history query: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]models.SBOMResult, 0)
+	for rows.Next() {
+		result, err := sbomResultRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &SBOMHistoryPage{
+		Results:    results,
+		Total:      total,
+		Page:       params.Page,
+		PageSize:   params.PageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
 // ListScannedImages returns distinct image+host pairs with scan counts.
 func (s *ScanDB) ListScannedImages() ([]ScannedImage, error) {
 	rows, err := s.db.Query(`SELECT image_ref, host, COUNT(*) as scan_count, MAX(completed_at) as last_scanned
@@ -419,6 +751,29 @@ func (s *ScanDB) ListScannedImages() ([]ScannedImage, error) {
 	}
 	if images == nil {
 		images = []ScannedImage{}
+	}
+	return images, rows.Err()
+}
+
+// ListSBOMedImages returns distinct image+host pairs with SBOM counts.
+func (s *ScanDB) ListSBOMedImages() ([]SBOMedImage, error) {
+	rows, err := s.db.Query(`SELECT image_ref, host, COUNT(*) as sbom_count, MAX(completed_at) as last_sbom_at
+		FROM sbom_results GROUP BY image_ref, host ORDER BY last_sbom_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var images []SBOMedImage
+	for rows.Next() {
+		var img SBOMedImage
+		if err := rows.Scan(&img.ImageRef, &img.Host, &img.SBOMCount, &img.LastSBOMAt); err != nil {
+			return nil, err
+		}
+		images = append(images, img)
+	}
+	if images == nil {
+		images = []SBOMedImage{}
 	}
 	return images, rows.Err()
 }
@@ -450,6 +805,33 @@ func (s *ScanDB) UpsertImageScanState(host, imageRef, imageID string, scannedAt 
 	return err
 }
 
+// GetImageSBOMState returns the latest persisted SBOM state for an image on a host.
+func (s *ScanDB) GetImageSBOMState(host, imageRef, format string) (*ImageSBOMState, error) {
+	var state ImageSBOMState
+	err := s.db.QueryRow(`SELECT host, image_ref, format, image_id, last_sbom_at, last_sbom_id
+		FROM image_sbom_state WHERE host = ? AND image_ref = ? AND format = ?`, host, imageRef, format).
+		Scan(&state.Host, &state.ImageRef, &state.Format, &state.ImageID, &state.LastSBOMAt, &state.LastSBOMID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// UpsertImageSBOMState updates the SBOM image state for rescan gating.
+func (s *ScanDB) UpsertImageSBOMState(host, imageRef, format, imageID string, generatedAt int64, sbomID string) error {
+	_, err := s.db.Exec(`INSERT INTO image_sbom_state (host, image_ref, format, image_id, last_sbom_at, last_sbom_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host, image_ref, format) DO UPDATE SET
+			image_id = excluded.image_id,
+			last_sbom_at = excluded.last_sbom_at,
+			last_sbom_id = excluded.last_sbom_id`,
+		host, imageRef, format, imageID, generatedAt, sbomID)
+	return err
+}
+
 // CanRescan checks if an image has changed since the last scan (for rescan gating).
 // Returns true if a rescan is allowed (image changed or never scanned).
 func (s *ScanDB) CanRescan(host, imageRef, currentImageID string) (bool, error) {
@@ -462,6 +844,18 @@ func (s *ScanDB) CanRescan(host, imageRef, currentImageID string) (bool, error) 
 	}
 	if state.ImageID == "" {
 		return true, nil // no image ID recorded
+	}
+	return state.ImageID != currentImageID, nil
+}
+
+// CanRegenerateSBOM checks if an image has changed since the last persisted SBOM.
+func (s *ScanDB) CanRegenerateSBOM(host, imageRef, format, currentImageID string) (bool, error) {
+	state, err := s.GetImageSBOMState(host, imageRef, format)
+	if err != nil {
+		return false, err
+	}
+	if state == nil || state.ImageID == "" {
+		return true, nil
 	}
 	return state.ImageID != currentImageID, nil
 }
@@ -537,6 +931,10 @@ func (s *ScanDB) SaveScannerSettings(cfg *models.ScannerConfig) error {
 		{"auto_scan_enabled", boolToStr(cfg.AutoScan.Enabled)},
 		{"auto_scan_poll_interval", fmt.Sprintf("%d", cfg.AutoScan.PollInterval)},
 		{"force_rescan_enabled", boolToStr(cfg.ForceRescan)},
+		{"scan_timeout_minutes", fmt.Sprintf("%d", cfg.ScanTimeoutMinutes)},
+		{"bulk_timeout_minutes", fmt.Sprintf("%d", cfg.BulkTimeoutMinutes)},
+		{"scanner_memory_mb", fmt.Sprintf("%d", cfg.ScannerMemoryMB)},
+		{"scanner_pids_limit", fmt.Sprintf("%d", cfg.ScannerPidsLimit)},
 	}
 
 	for _, p := range pairs {
@@ -574,9 +972,13 @@ func (s *ScanDB) LoadScannerSettings(envCfg *models.ScannerConfig) *models.Scann
 		},
 		AutoScan: models.AutoScanConfig{
 			Enabled:      getSettingWithDefault(dbSettings, "auto_scan_enabled", "false") == "true",
-			PollInterval: parseIntSetting(getSettingWithDefault(dbSettings, "auto_scan_poll_interval", "15")),
+			PollInterval: parseIntSetting(getSettingWithDefault(dbSettings, "auto_scan_poll_interval", "15"), 15),
 		},
-		ForceRescan: getSettingWithDefault(dbSettings, "force_rescan_enabled", "false") == "true",
+		ForceRescan:        getSettingWithDefault(dbSettings, "force_rescan_enabled", "false") == "true",
+		ScanTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "scan_timeout_minutes", "20"), 20),
+		BulkTimeoutMinutes: parseIntSetting(getSettingWithDefault(dbSettings, "bulk_timeout_minutes", "120"), 120),
+		ScannerMemoryMB:    parseIntSetting(getSettingWithDefault(dbSettings, "scanner_memory_mb", "2048"), 2048),
+		ScannerPidsLimit:   parseIntSetting(getSettingWithDefault(dbSettings, "scanner_pids_limit", "512"), 512),
 	}
 
 	// Apply env overrides (non-empty env values take precedence)
@@ -607,6 +1009,18 @@ func (s *ScanDB) LoadScannerSettings(envCfg *models.ScannerConfig) *models.Scann
 		}
 		if envCfg.Notifications.MinSeverity != "" {
 			cfg.Notifications.MinSeverity = envCfg.Notifications.MinSeverity
+		}
+		if envCfg.ScanTimeoutMinutes > 0 {
+			cfg.ScanTimeoutMinutes = envCfg.ScanTimeoutMinutes
+		}
+		if envCfg.BulkTimeoutMinutes > 0 {
+			cfg.BulkTimeoutMinutes = envCfg.BulkTimeoutMinutes
+		}
+		if envCfg.ScannerMemoryMB > 0 {
+			cfg.ScannerMemoryMB = envCfg.ScannerMemoryMB
+		}
+		if envCfg.ScannerPidsLimit > 0 {
+			cfg.ScannerPidsLimit = envCfg.ScannerPidsLimit
 		}
 	}
 
@@ -660,6 +1074,32 @@ func scanResultFromRow(row *sql.Row) (models.ScanResult, error) {
 	return r, nil
 }
 
+func sbomResultRow(rows *sql.Rows) (models.SBOMResult, error) {
+	var result models.SBOMResult
+	var formatStr, errStr string
+	err := rows.Scan(&result.ID, &result.ImageRef, &result.Host, &formatStr, &result.ComponentCount,
+		&result.FileSize, &result.FilePath, &result.StartedAt, &result.CompletedAt, &result.DurationMs, &errStr)
+	if err != nil {
+		return result, err
+	}
+	result.Format = models.SBOMFormat(formatStr)
+	result.Error = errStr
+	return result, nil
+}
+
+func sbomResultFromRow(row *sql.Row) (models.SBOMResult, error) {
+	var result models.SBOMResult
+	var formatStr, errStr string
+	err := row.Scan(&result.ID, &result.ImageRef, &result.Host, &formatStr, &result.ComponentCount,
+		&result.FileSize, &result.FilePath, &result.StartedAt, &result.CompletedAt, &result.DurationMs, &errStr)
+	if err != nil {
+		return result, err
+	}
+	result.Format = models.SBOMFormat(formatStr)
+	result.Error = errStr
+	return result, nil
+}
+
 func (s *ScanDB) loadVulnerabilities(scanResultID string) ([]models.Vulnerability, error) {
 	rows, err := s.db.Query(`SELECT id, severity, package, installed_version,
 		fixed_version, description, data_source
@@ -684,6 +1124,29 @@ func (s *ScanDB) loadVulnerabilities(scanResultID string) ([]models.Vulnerabilit
 		vulns = []models.Vulnerability{}
 	}
 	return vulns, rows.Err()
+}
+
+func (s *ScanDB) loadSBOMComponents(sbomResultID string) ([]models.SBOMComponent, error) {
+	rows, err := s.db.Query(`SELECT name, version, type, purl
+		FROM sbom_components WHERE sbom_result_id = ?
+		ORDER BY name ASC, version ASC, purl ASC`, sbomResultID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var components []models.SBOMComponent
+	for rows.Next() {
+		var component models.SBOMComponent
+		if err := rows.Scan(&component.Name, &component.Version, &component.Type, &component.PURL); err != nil {
+			return nil, err
+		}
+		components = append(components, component)
+	}
+	if components == nil {
+		components = []models.SBOMComponent{}
+	}
+	return components, rows.Err()
 }
 
 func buildHistoryWhere(params HistoryQuery) (string, []interface{}) {
@@ -725,6 +1188,37 @@ func buildHistoryWhere(params HistoryQuery) (string, []interface{}) {
 	return " WHERE " + strings.Join(conditions, " AND "), args
 }
 
+func buildSBOMHistoryWhere(params SBOMHistoryQuery) (string, []interface{}) {
+	var conditions []string
+	var args []interface{}
+
+	if params.ImageRef != "" {
+		conditions = append(conditions, "image_ref LIKE ?")
+		args = append(args, "%"+params.ImageRef+"%")
+	}
+	if params.Host != "" {
+		conditions = append(conditions, "host = ?")
+		args = append(args, params.Host)
+	}
+	if params.Format != "" {
+		conditions = append(conditions, "format = ?")
+		args = append(args, params.Format)
+	}
+	if params.StartDate > 0 {
+		conditions = append(conditions, "completed_at >= ?")
+		args = append(args, params.StartDate)
+	}
+	if params.EndDate > 0 {
+		conditions = append(conditions, "completed_at <= ?")
+		args = append(args, params.EndDate)
+	}
+
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
 func boolToStr(b bool) string {
 	if b {
 		return "true"
@@ -739,11 +1233,13 @@ func getSettingWithDefault(settings map[string]string, key, defaultVal string) s
 	return defaultVal
 }
 
-func parseIntSetting(s string) int {
-	var n int
-	fmt.Sscanf(s, "%d", &n)
-	if n <= 0 {
-		return 15
+// parseIntSetting parses a settings value as a positive int. If the value is
+// missing, malformed, or non-positive, def is returned. The per-setting default
+// must be supplied by the caller — there is no universal fallback.
+func parseIntSetting(s string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return def
 	}
 	return n
 }

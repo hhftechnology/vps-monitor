@@ -25,6 +25,15 @@ func (s *ScanResultStore) Add(result models.ScanResult) error {
 	return nil
 }
 
+// AddSBOM stores a persisted SBOM result in the database.
+func (s *ScanResultStore) AddSBOM(result models.SBOMResult, imageID string) error {
+	if err := s.db.InsertSBOMResult(result, imageID); err != nil {
+		log.Printf("Failed to persist SBOM result: %v", err)
+		return err
+	}
+	return nil
+}
+
 // GetResults returns all scan results for a specific image on a host.
 func (s *ScanResultStore) GetResults(host, imageRef string) []models.ScanResult {
 	results, err := s.db.GetResults(host, imageRef)

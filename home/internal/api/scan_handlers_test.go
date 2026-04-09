@@ -20,7 +20,9 @@ import (
 // newTestScannerService creates a ScannerService backed by a stub Registry that
 // has no Docker client. StartScan goroutines fail gracefully (status="failed")
 // without panicking, making the service safe for handler tests.
-func newTestScannerService() *scanner.ScannerService {
+func newTestScannerService(t *testing.T) *scanner.ScannerService {
+	t.Helper()
+
 	cfg := &models.ScannerConfig{
 		GrypeImage:     "anchore/grype:latest",
 		TrivyImage:     "aquasec/trivy:latest",
@@ -30,7 +32,11 @@ func newTestScannerService() *scanner.ScannerService {
 	// Registry with nil docker client: AcquireDocker returns (nil, func(){})
 	// which is handled gracefully in runScan.
 	registry := services.NewRegistry(nil, nil, nil, &config.Config{}, nil)
-	return scanner.NewScannerService(registry, cfg)
+	db, err := scanner.NewScanDB(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatalf("NewScanDB() error = %v", err)
+	}
+	return scanner.NewScannerService(registry, cfg, db)
 }
 
 // newTestManager creates a Manager pointing to a temp file (for tests that
@@ -50,12 +56,10 @@ func chiContext(r *http.Request, params map[string]string) *http.Request {
 	return r.WithContext(ctx)
 }
 
-
-
 // ─── GetScanJobs ──────────────────────────────────────────────────────────────
 
 func TestGetScanJobsReturnsEmptySlices(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/jobs", nil)
 	rec := httptest.NewRecorder()
@@ -81,7 +85,7 @@ func TestGetScanJobsReturnsEmptySlices(t *testing.T) {
 // ─── GetScanJob ───────────────────────────────────────────────────────────────
 
 func TestGetScanJobReturnsNotFoundForUnknownID(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/jobs/unknown-id", nil)
 	req = chiContext(req, map[string]string{"id": "unknown-id"})
@@ -94,7 +98,7 @@ func TestGetScanJobReturnsNotFoundForUnknownID(t *testing.T) {
 }
 
 func TestGetScanJobReturnsJobWhenFound(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 
 	// Manually inject a job into the service store via StartScan
 	// (StartScan returns immediately with pending status; the goroutine fails
@@ -129,7 +133,7 @@ func TestGetScanJobReturnsJobWhenFound(t *testing.T) {
 // ─── StartScan validation ─────────────────────────────────────────────────────
 
 func TestStartScanRejectsMissingFields(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	cases := []struct {
 		name string
@@ -155,7 +159,7 @@ func TestStartScanRejectsMissingFields(t *testing.T) {
 }
 
 func TestStartScanRejectsInvalidJSON(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/scan",
 		bytes.NewBufferString(`not-json`))
@@ -170,7 +174,7 @@ func TestStartScanRejectsInvalidJSON(t *testing.T) {
 // ─── StartBulkScan validation ─────────────────────────────────────────────────
 
 func TestStartBulkScanRejectsInvalidJSON(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/scan/bulk",
 		bytes.NewBufferString(`not-json`))
@@ -185,7 +189,7 @@ func TestStartBulkScanRejectsInvalidJSON(t *testing.T) {
 // ─── CancelScanJob ────────────────────────────────────────────────────────────
 
 func TestCancelScanJobReturnsNotFoundForUnknownID(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scan/jobs/ghost", nil)
 	req = chiContext(req, map[string]string{"id": "ghost"})
@@ -200,10 +204,9 @@ func TestCancelScanJobReturnsNotFoundForUnknownID(t *testing.T) {
 // ─── GetScanResults ───────────────────────────────────────────────────────────
 
 func TestGetScanResultsRequiresHostParam(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/nginx:latest", nil)
-	req = chiContext(req, map[string]string{"imageRef": "nginx:latest"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results?image=nginx:latest", nil)
 	// No host query param
 	rec := httptest.NewRecorder()
 	h.GetScanResults(rec, req)
@@ -214,10 +217,9 @@ func TestGetScanResultsRequiresHostParam(t *testing.T) {
 }
 
 func TestGetScanResultsReturnsEmptyForUnknownImage(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/unknown:image?host=local", nil)
-	req = chiContext(req, map[string]string{"imageRef": "unknown:image"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results?image=unknown:image&host=local", nil)
 	rec := httptest.NewRecorder()
 	h.GetScanResults(rec, req)
 
@@ -227,7 +229,7 @@ func TestGetScanResultsReturnsEmptyForUnknownImage(t *testing.T) {
 }
 
 func TestGetScanResultsReturnsStoredResults(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	svc.Store().Add(models.ScanResult{
 		ID:       "res-1",
 		ImageRef: "redis:7",
@@ -236,8 +238,7 @@ func TestGetScanResultsReturnsStoredResults(t *testing.T) {
 	})
 
 	h := &ScanHandlers{scanner: svc}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/redis:7?host=local", nil)
-	req = chiContext(req, map[string]string{"imageRef": "redis:7"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results?image=redis:7&host=local", nil)
 	rec := httptest.NewRecorder()
 	h.GetScanResults(rec, req)
 
@@ -261,10 +262,9 @@ func TestGetScanResultsReturnsStoredResults(t *testing.T) {
 // ─── GetLatestScanResult ──────────────────────────────────────────────────────
 
 func TestGetLatestScanResultRequiresHostParam(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/nginx:latest/latest", nil)
-	req = chiContext(req, map[string]string{"imageRef": "nginx:latest"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/latest?image=nginx:latest", nil)
 	rec := httptest.NewRecorder()
 	h.GetLatestScanResult(rec, req)
 
@@ -274,10 +274,9 @@ func TestGetLatestScanResultRequiresHostParam(t *testing.T) {
 }
 
 func TestGetLatestScanResultReturns404WhenNoResults(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/missing:img/latest?host=local", nil)
-	req = chiContext(req, map[string]string{"imageRef": "missing:img"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/latest?image=missing:img&host=local", nil)
 	rec := httptest.NewRecorder()
 	h.GetLatestScanResult(rec, req)
 
@@ -287,7 +286,7 @@ func TestGetLatestScanResultReturns404WhenNoResults(t *testing.T) {
 }
 
 func TestGetLatestScanResultReturnsResult(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	svc.Store().Add(models.ScanResult{
 		ID:       "latest-1",
 		ImageRef: "postgres:16",
@@ -295,8 +294,7 @@ func TestGetLatestScanResultReturnsResult(t *testing.T) {
 	})
 
 	h := &ScanHandlers{scanner: svc}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/postgres:16/latest?host=remote", nil)
-	req = chiContext(req, map[string]string{"imageRef": "postgres:16"})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/results/latest?image=postgres:16&host=remote", nil)
 	rec := httptest.NewRecorder()
 	h.GetLatestScanResult(rec, req)
 
@@ -316,7 +314,7 @@ func TestGetLatestScanResultReturnsResult(t *testing.T) {
 // ─── StartSBOMGeneration validation ──────────────────────────────────────────
 
 func TestStartSBOMGenerationRejectsMissingFields(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	cases := []struct {
 		name string
@@ -342,7 +340,7 @@ func TestStartSBOMGenerationRejectsMissingFields(t *testing.T) {
 }
 
 func TestStartSBOMGenerationRejectsInvalidJSON(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/scan/sbom",
 		bytes.NewBufferString(`{invalid}`))
@@ -357,7 +355,7 @@ func TestStartSBOMGenerationRejectsInvalidJSON(t *testing.T) {
 // ─── GetSBOMJob ───────────────────────────────────────────────────────────────
 
 func TestGetSBOMJobReturnsNotFoundForUnknownID(t *testing.T) {
-	h := &ScanHandlers{scanner: newTestScannerService()}
+	h := &ScanHandlers{scanner: newTestScannerService(t)}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/sbom/ghost", nil)
 	req = chiContext(req, map[string]string{"id": "ghost"})
@@ -372,7 +370,7 @@ func TestGetSBOMJobReturnsNotFoundForUnknownID(t *testing.T) {
 // ─── GetScannerConfig ─────────────────────────────────────────────────────────
 
 func TestGetScannerConfigReturnsCurrentConfig(t *testing.T) {
-	svc := newTestScannerService()
+	svc := newTestScannerService(t)
 	h := &ScanHandlers{scanner: svc}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/scan", nil)
@@ -402,7 +400,7 @@ func TestUpdateScannerConfigRejectsInvalidJSON(t *testing.T) {
 	realMgr := mustNewManagerWithTempFile(t, filepath.Join(tmpDir, "config.json"))
 
 	h := &ScanHandlers{
-		scanner: newTestScannerService(),
+		scanner: newTestScannerService(t),
 		manager: realMgr,
 	}
 
@@ -420,7 +418,7 @@ func TestUpdateScannerConfigPersistsChanges(t *testing.T) {
 	realMgr := mustNewManagerWithTempFile(t, filepath.Join(t.TempDir(), "config.json"))
 
 	h := &ScanHandlers{
-		scanner: newTestScannerService(),
+		scanner: newTestScannerService(t),
 		manager: realMgr,
 	}
 

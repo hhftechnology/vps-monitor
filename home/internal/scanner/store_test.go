@@ -1,14 +1,18 @@
 package scanner
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/hhftechnology/vps-monitor/internal/models"
 )
 
+func newTestScanResultStore(t *testing.T) *ScanResultStore {
+	t.Helper()
+	return NewScanResultStore(newTestScanDB(t))
+}
+
 func TestScanResultStoreAddAndGetResults(t *testing.T) {
-	store := NewScanResultStore()
+	store := newTestScanResultStore(t)
 
 	result := models.ScanResult{
 		ID:       "result-1",
@@ -18,7 +22,9 @@ func TestScanResultStoreAddAndGetResults(t *testing.T) {
 		Summary:  models.SeveritySummary{Total: 2, High: 2},
 	}
 
-	store.Add(result)
+	if err := store.Add(result); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
 
 	results := store.GetResults("local", "nginx:latest")
 	if len(results) != 1 {
@@ -30,7 +36,7 @@ func TestScanResultStoreAddAndGetResults(t *testing.T) {
 }
 
 func TestScanResultStoreGetResultsEmptyForUnknownImage(t *testing.T) {
-	store := NewScanResultStore()
+	store := newTestScanResultStore(t)
 
 	results := store.GetResults("local", "nonexistent:latest")
 	if results == nil {
@@ -42,26 +48,41 @@ func TestScanResultStoreGetResultsEmptyForUnknownImage(t *testing.T) {
 }
 
 func TestScanResultStoreGetLatestReturnsNewest(t *testing.T) {
-	store := NewScanResultStore()
+	store := newTestScanResultStore(t)
 
-	older := models.ScanResult{ID: "old", ImageRef: "alpine:3.18", Host: "local", CompletedAt: 100}
-	newer := models.ScanResult{ID: "new", ImageRef: "alpine:3.18", Host: "local", CompletedAt: 200}
+	older := models.ScanResult{
+		ID:          "old",
+		ImageRef:    "alpine:3.18",
+		Host:        "local",
+		Scanner:     models.ScannerGrype,
+		CompletedAt: 100,
+	}
+	newer := models.ScanResult{
+		ID:          "new",
+		ImageRef:    "alpine:3.18",
+		Host:        "local",
+		Scanner:     models.ScannerGrype,
+		CompletedAt: 200,
+	}
 
-	store.Add(older)
-	store.Add(newer)
+	if err := store.Add(older); err != nil {
+		t.Fatalf("Add(older) error = %v", err)
+	}
+	if err := store.Add(newer); err != nil {
+		t.Fatalf("Add(newer) error = %v", err)
+	}
 
 	latest := store.GetLatest("local", "alpine:3.18")
 	if latest == nil {
 		t.Fatal("expected a result, got nil")
 	}
-	// Add prepends, so the last-added is first
 	if latest.ID != "new" {
 		t.Fatalf("expected newest result ID 'new', got %q", latest.ID)
 	}
 }
 
 func TestScanResultStoreGetLatestReturnsNilWhenEmpty(t *testing.T) {
-	store := NewScanResultStore()
+	store := newTestScanResultStore(t)
 
 	result := store.GetLatest("local", "missing:image")
 	if result != nil {
@@ -70,10 +91,14 @@ func TestScanResultStoreGetLatestReturnsNilWhenEmpty(t *testing.T) {
 }
 
 func TestScanResultStoreIsolatesByHost(t *testing.T) {
-	store := NewScanResultStore()
+	store := newTestScanResultStore(t)
 
-	store.Add(models.ScanResult{ID: "host-a", ImageRef: "redis:7", Host: "host-a"})
-	store.Add(models.ScanResult{ID: "host-b", ImageRef: "redis:7", Host: "host-b"})
+	if err := store.Add(models.ScanResult{ID: "host-a", ImageRef: "redis:7", Host: "host-a", Scanner: models.ScannerGrype}); err != nil {
+		t.Fatalf("Add(host-a) error = %v", err)
+	}
+	if err := store.Add(models.ScanResult{ID: "host-b", ImageRef: "redis:7", Host: "host-b", Scanner: models.ScannerGrype}); err != nil {
+		t.Fatalf("Add(host-b) error = %v", err)
+	}
 
 	resultsA := store.GetResults("host-a", "redis:7")
 	resultsB := store.GetResults("host-b", "redis:7")
@@ -86,33 +111,10 @@ func TestScanResultStoreIsolatesByHost(t *testing.T) {
 	}
 }
 
-func TestScanResultStoreCapsAtMaxResults(t *testing.T) {
-	store := NewScanResultStore()
+func TestScanResultStoreDBAccessor(t *testing.T) {
+	store := newTestScanResultStore(t)
 
-	for i := range maxResultsPerImage + 5 {
-		store.Add(models.ScanResult{
-			ID:       fmt.Sprintf("result-%d", i),
-			ImageRef: "ubuntu:22.04",
-			Host:     "local",
-		})
-	}
-
-	results := store.GetResults("local", "ubuntu:22.04")
-	if len(results) != maxResultsPerImage {
-		t.Fatalf("expected results capped at %d, got %d", maxResultsPerImage, len(results))
-	}
-}
-
-func TestScanResultStoreGetResultsReturnsCopy(t *testing.T) {
-	store := NewScanResultStore()
-	store.Add(models.ScanResult{ID: "r1", ImageRef: "img:tag", Host: "local"})
-
-	results := store.GetResults("local", "img:tag")
-	results[0].ID = "mutated"
-
-	// Original in store should be unchanged
-	originals := store.GetResults("local", "img:tag")
-	if originals[0].ID == "mutated" {
-		t.Fatal("GetResults should return a copy, not a reference to internal data")
+	if store.DB() == nil {
+		t.Fatal("expected non-nil DB accessor")
 	}
 }

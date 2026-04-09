@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import { DownloadIcon, FileTextIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { DownloadIcon, FileCheck2Icon, FileTextIcon, HistoryIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-import { downloadSBOM } from "../api/generate-sbom";
+import { SBOMRegenBlockedError, downloadSBOM } from "../api/generate-sbom";
 import { useGenerateSBOM, useSBOMJob } from "../hooks/use-scan-query";
 import type { SBOMFormat } from "../types";
 
@@ -37,14 +38,16 @@ interface SBOMDialogProps {
   onOpenChange: (open: boolean) => void;
   imageRef: string;
   host: string;
+  onJobCreated?: (jobId: string) => void;
 }
 
-export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogProps) {
+export function SBOMDialog({ isOpen, onOpenChange, imageRef, host, onJobCreated }: SBOMDialogProps) {
   const [format, setFormat] = useState<SBOMFormat>("spdx-json");
   const [jobId, setJobId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [sbomData, setSbomData] = useState<any>(null);
+  const [regenBlocked, setRegenBlocked] = useState(false);
 
   const generateMutation = useGenerateSBOM();
   const { data: sbomJob } = useSBOMJob(jobId, started);
@@ -92,8 +95,14 @@ export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogP
       const job = await generateMutation.mutateAsync({ imageRef, host, format });
       setJobId(job.id);
       setStarted(true);
-    } catch {
-      // mutation handles errors
+      onJobCreated?.(job.id);
+    } catch (error) {
+      if (error instanceof SBOMRegenBlockedError) {
+        setRegenBlocked(true);
+        return;
+      }
+
+      toast.error(error instanceof Error ? error.message : "Failed to generate SBOM");
     }
   };
 
@@ -122,6 +131,7 @@ export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogP
       setStarted(false);
       setDownloading(false);
       setSbomData(null);
+      setRegenBlocked(false);
     }
     onOpenChange(open);
   };
@@ -144,7 +154,30 @@ export function SBOMDialog({ isOpen, onOpenChange, imageRef, host }: SBOMDialogP
           </DialogDescription>
         </DialogHeader>
 
-        {!started ? (
+        {regenBlocked ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 rounded-md bg-muted p-4">
+              <FileCheck2Icon className="size-5 shrink-0 text-green-500" />
+              <div>
+                <p className="font-medium">Already generated</p>
+                <p className="text-sm text-muted-foreground">
+                  This image hasn't changed since the last SBOM was generated.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => handleClose(false)}>
+                Close
+              </Button>
+              <Button asChild>
+                <Link to="/sbom-history">
+                  <HistoryIcon className="mr-2 size-4" />
+                  View SBOM History
+                </Link>
+              </Button>
+            </div>
+          </div>
+        ) : !started ? (
           <div className="space-y-4">
             <div className="space-y-1">
               <label htmlFor="sbom-format" className="text-sm font-medium">Format</label>

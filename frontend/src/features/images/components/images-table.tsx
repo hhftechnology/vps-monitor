@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   DownloadIcon,
+  FileCheck2Icon,
   FileTextIcon,
   RefreshCcwIcon,
   SearchIcon,
@@ -14,7 +15,7 @@ import { toast } from "sonner";
 import { BulkScanDialog } from "@/features/scanner/components/bulk-scan-dialog";
 import { SBOMDialog } from "@/features/scanner/components/sbom-dialog";
 import { ScanDialog } from "@/features/scanner/components/scan-dialog";
-import { useScannedImages } from "@/features/scanner/hooks/use-scan-query";
+import { useObservedSBOMJobs, useSBOMedImages, useScannedImages } from "@/features/scanner/hooks/use-scan-query";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -76,6 +77,7 @@ export function ImagesTable() {
   const { data, isLoading, error, refetch, isRefetching } = useImagesQuery();
   const removeImageMutation = useRemoveImageMutation();
   const { data: scannedImages } = useScannedImages();
+  const { data: sbomedImages } = useSBOMedImages();
 
   const scannedSet = useMemo(() => {
     const set = new Set<string>();
@@ -84,6 +86,14 @@ export function ImagesTable() {
     }
     return set;
   }, [scannedImages]);
+
+  const sbomedSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const img of sbomedImages ?? []) {
+      set.add(`${img.image_ref}::${img.host}`);
+    }
+    return set;
+  }, [sbomedImages]);
 
   const [searchText, setSearchText] = useState("");
   const [isPullDialogOpen, setIsPullDialogOpen] = useState(false);
@@ -94,7 +104,12 @@ export function ImagesTable() {
   } | null>(null);
   const [scanImage, setScanImage] = useState<ImageInfo | null>(null);
   const [sbomImage, setSbomImage] = useState<ImageInfo | null>(null);
+  const [activeSBOMJobIds, setActiveSBOMJobIds] = useState<string[]>([]);
   const [bulkScanOpen, setBulkScanOpen] = useState(false);
+
+  useObservedSBOMJobs(activeSBOMJobIds, (jobId) => {
+    setActiveSBOMJobIds((prev) => prev.filter((activeJobId) => activeJobId !== jobId));
+  });
 
   const allImages = useMemo(() => data?.images ?? [], [data?.images]);
 
@@ -274,18 +289,31 @@ export function ImagesTable() {
                               <TooltipContent>Scan image</TooltipContent>
                             </Tooltip>
                           )}
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                onClick={() => setSbomImage(image)}
-                              >
-                                <FileTextIcon className="size-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Generate SBOM</TooltipContent>
-                          </Tooltip>
+                          {sbomedSet.has(`${getImageDisplayName(image)}::${image.host}`) ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon-sm" asChild>
+                                  <Link to="/sbom-history">
+                                    <FileCheck2Icon className="size-4 text-green-500" />
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>View SBOM</TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => setSbomImage(image)}
+                                >
+                                  <FileTextIcon className="size-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Generate SBOM</TooltipContent>
+                            </Tooltip>
+                          )}
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -343,6 +371,11 @@ export function ImagesTable() {
           }}
           imageRef={getImageDisplayName(sbomImage)}
           host={sbomImage.host}
+          onJobCreated={(jobId) => {
+            setActiveSBOMJobIds((prev) => (
+              prev.includes(jobId) ? prev : [...prev, jobId]
+            ));
+          }}
         />
       )}
 

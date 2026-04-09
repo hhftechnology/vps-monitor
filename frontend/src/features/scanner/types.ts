@@ -64,8 +64,30 @@ export interface SBOMJob {
   host: string;
   format: SBOMFormat;
   status: ScanJobStatus;
+  result_id?: string;
   created_at: number;
   error?: string;
+}
+
+export interface SBOMComponent {
+  name: string;
+  version: string;
+  type: string;
+  purl: string;
+}
+
+export interface SBOMResult {
+  id: string;
+  image_ref: string;
+  host: string;
+  format: SBOMFormat;
+  component_count: number;
+  file_size: number;
+  started_at: number;
+  completed_at: number;
+  duration_ms: number;
+  error?: string;
+  components?: SBOMComponent[];
 }
 
 export interface NotificationConfig {
@@ -92,6 +114,10 @@ export interface ScannerConfig {
   notifications: NotificationConfig;
   autoScan: AutoScanConfig;
   forceRescan: boolean;
+  scanTimeoutMinutes: number;
+  bulkTimeoutMinutes: number;
+  scannerMemoryMB: number;
+  scannerPidsLimit: number;
 }
 
 export interface HistoryQueryParams {
@@ -114,11 +140,38 @@ export interface HistoryPage {
   total_pages: number;
 }
 
+export interface SBOMHistoryQueryParams {
+  image?: string;
+  host?: string;
+  format?: SBOMFormat;
+  start_date?: number;
+  end_date?: number;
+  page?: number;
+  page_size?: number;
+  sort_by?: "completed_at" | "component_count";
+  sort_dir?: "asc" | "desc";
+}
+
+export interface SBOMHistoryPage {
+  results: SBOMResult[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export interface ScannedImage {
   image_ref: string;
   host: string;
   scan_count: number;
   last_scanned: number;
+}
+
+export interface SBOMedImage {
+  image_ref: string;
+  host: string;
+  sbom_count: number;
+  last_sbom_at: number;
 }
 
 export interface AutoScanStatus {
@@ -132,4 +185,11 @@ export interface RescanBlockedResponse {
   message: string;
   last_scan_id?: string;
   last_scan_at?: number;
+}
+
+export interface SBOMRescanBlockedResponse {
+  error: "image_unchanged";
+  message: string;
+  last_sbom_id?: string;
+  last_sbom_at?: number;
 }

@@ -427,3 +427,290 @@ func TestParseScannerConfigEnvOverrides(t *testing.T) {
 		t.Fatalf("expected NotifyMinSeverity 'Critical', got %q", cfg.NotifyMinSeverity)
 	}
 }
+
+// ─── parseScannerConfig resource limits ──────────────────────────────────────
+
+// TestParseScannerConfigResourceLimitDefaults verifies default values for the
+// four new resource-limit fields added in this PR.
+func TestParseScannerConfigResourceLimitDefaults(t *testing.T) {
+	t.Setenv("SCANNER_TIMEOUT_MINUTES", "")
+	t.Setenv("SCANNER_BULK_TIMEOUT_MINUTES", "")
+	t.Setenv("SCANNER_MEMORY_MB", "")
+	t.Setenv("SCANNER_PIDS_LIMIT", "")
+
+	cfg := parseScannerConfig()
+
+	if cfg.ScanTimeoutMinutes != 20 {
+		t.Fatalf("expected default ScanTimeoutMinutes=20, got %d", cfg.ScanTimeoutMinutes)
+	}
+	if cfg.BulkTimeoutMinutes != 120 {
+		t.Fatalf("expected default BulkTimeoutMinutes=120, got %d", cfg.BulkTimeoutMinutes)
+	}
+	if cfg.ScannerMemoryMB != 2048 {
+		t.Fatalf("expected default ScannerMemoryMB=2048, got %d", cfg.ScannerMemoryMB)
+	}
+	if cfg.ScannerPidsLimit != 512 {
+		t.Fatalf("expected default ScannerPidsLimit=512, got %d", cfg.ScannerPidsLimit)
+	}
+}
+
+// TestParseScannerConfigResourceLimitEnvOverrides verifies that positive integer
+// env vars override the defaults.
+func TestParseScannerConfigResourceLimitEnvOverrides(t *testing.T) {
+	t.Setenv("SCANNER_TIMEOUT_MINUTES", "30")
+	t.Setenv("SCANNER_BULK_TIMEOUT_MINUTES", "240")
+	t.Setenv("SCANNER_MEMORY_MB", "4096")
+	t.Setenv("SCANNER_PIDS_LIMIT", "1024")
+
+	cfg := parseScannerConfig()
+
+	if cfg.ScanTimeoutMinutes != 30 {
+		t.Fatalf("expected ScanTimeoutMinutes=30, got %d", cfg.ScanTimeoutMinutes)
+	}
+	if cfg.BulkTimeoutMinutes != 240 {
+		t.Fatalf("expected BulkTimeoutMinutes=240, got %d", cfg.BulkTimeoutMinutes)
+	}
+	if cfg.ScannerMemoryMB != 4096 {
+		t.Fatalf("expected ScannerMemoryMB=4096, got %d", cfg.ScannerMemoryMB)
+	}
+	if cfg.ScannerPidsLimit != 1024 {
+		t.Fatalf("expected ScannerPidsLimit=1024, got %d", cfg.ScannerPidsLimit)
+	}
+}
+
+// TestParseScannerConfigResourceLimitIgnoresZeroAndNegative verifies that a
+// value of "0" or a negative integer does not override the default (the guard
+// requires n > 0).
+func TestParseScannerConfigResourceLimitIgnoresZeroAndNegative(t *testing.T) {
+	t.Setenv("SCANNER_TIMEOUT_MINUTES", "0")
+	t.Setenv("SCANNER_BULK_TIMEOUT_MINUTES", "-5")
+	t.Setenv("SCANNER_MEMORY_MB", "0")
+	t.Setenv("SCANNER_PIDS_LIMIT", "-1")
+
+	cfg := parseScannerConfig()
+
+	if cfg.ScanTimeoutMinutes != 20 {
+		t.Fatalf("zero SCANNER_TIMEOUT_MINUTES must not override default, got %d", cfg.ScanTimeoutMinutes)
+	}
+	if cfg.BulkTimeoutMinutes != 120 {
+		t.Fatalf("negative SCANNER_BULK_TIMEOUT_MINUTES must not override default, got %d", cfg.BulkTimeoutMinutes)
+	}
+	if cfg.ScannerMemoryMB != 2048 {
+		t.Fatalf("zero SCANNER_MEMORY_MB must not override default, got %d", cfg.ScannerMemoryMB)
+	}
+	if cfg.ScannerPidsLimit != 512 {
+		t.Fatalf("negative SCANNER_PIDS_LIMIT must not override default, got %d", cfg.ScannerPidsLimit)
+	}
+}
+
+// TestParseScannerConfigResourceLimitIgnoresNonNumeric verifies that a
+// non-numeric env var value does not override the default.
+func TestParseScannerConfigResourceLimitIgnoresNonNumeric(t *testing.T) {
+	t.Setenv("SCANNER_TIMEOUT_MINUTES", "abc")
+	t.Setenv("SCANNER_BULK_TIMEOUT_MINUTES", "two-hours")
+	t.Setenv("SCANNER_MEMORY_MB", "4gib")
+	t.Setenv("SCANNER_PIDS_LIMIT", "many")
+
+	cfg := parseScannerConfig()
+
+	if cfg.ScanTimeoutMinutes != 20 {
+		t.Fatalf("non-numeric SCANNER_TIMEOUT_MINUTES must keep default, got %d", cfg.ScanTimeoutMinutes)
+	}
+	if cfg.BulkTimeoutMinutes != 120 {
+		t.Fatalf("non-numeric SCANNER_BULK_TIMEOUT_MINUTES must keep default, got %d", cfg.BulkTimeoutMinutes)
+	}
+	if cfg.ScannerMemoryMB != 2048 {
+		t.Fatalf("non-numeric SCANNER_MEMORY_MB must keep default, got %d", cfg.ScannerMemoryMB)
+	}
+	if cfg.ScannerPidsLimit != 512 {
+		t.Fatalf("non-numeric SCANNER_PIDS_LIMIT must keep default, got %d", cfg.ScannerPidsLimit)
+	}
+}
+
+// ─── Manager merge – resource limits ─────────────────────────────────────────
+
+// TestScannerMergeResourceLimitsFileOverridesEnv verifies that positive
+// pointer-int file config values for the new resource-limit fields override
+// the env-derived defaults.
+func TestScannerMergeResourceLimitsFileOverridesEnv(t *testing.T) {
+	envCfg := NewConfig()
+	// env defaults (from parseScannerConfig)
+	envCfg.Scanner.ScanTimeoutMinutes = 20
+	envCfg.Scanner.BulkTimeoutMinutes = 120
+	envCfg.Scanner.ScannerMemoryMB = 2048
+	envCfg.Scanner.ScannerPidsLimit = 512
+
+	timeout := 45
+	bulk := 200
+	mem := 8192
+	pids := 256
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+		fileConfig: FileConfig{
+			Scanner: &FileScannerConfig{
+				ScanTimeoutMinutes: &timeout,
+				BulkTimeoutMinutes: &bulk,
+				ScannerMemoryMB:    &mem,
+				ScannerPidsLimit:   &pids,
+			},
+		},
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.ScanTimeoutMinutes != 45 {
+		t.Fatalf("expected ScanTimeoutMinutes=45, got %d", merged.Scanner.ScanTimeoutMinutes)
+	}
+	if merged.Scanner.BulkTimeoutMinutes != 200 {
+		t.Fatalf("expected BulkTimeoutMinutes=200, got %d", merged.Scanner.BulkTimeoutMinutes)
+	}
+	if merged.Scanner.ScannerMemoryMB != 8192 {
+		t.Fatalf("expected ScannerMemoryMB=8192, got %d", merged.Scanner.ScannerMemoryMB)
+	}
+	if merged.Scanner.ScannerPidsLimit != 256 {
+		t.Fatalf("expected ScannerPidsLimit=256, got %d", merged.Scanner.ScannerPidsLimit)
+	}
+}
+
+// TestScannerMergeResourceLimitsZeroFileValueDoesNotOverride verifies that a
+// pointer-int with value 0 in the file config does NOT override the env default
+// (the guard requires *ptr > 0).
+func TestScannerMergeResourceLimitsZeroFileValueDoesNotOverride(t *testing.T) {
+	envCfg := NewConfig()
+	envCfg.Scanner.ScanTimeoutMinutes = 20
+	envCfg.Scanner.BulkTimeoutMinutes = 120
+	envCfg.Scanner.ScannerMemoryMB = 2048
+	envCfg.Scanner.ScannerPidsLimit = 512
+
+	zero := 0
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+		fileConfig: FileConfig{
+			Scanner: &FileScannerConfig{
+				ScanTimeoutMinutes: &zero,
+				BulkTimeoutMinutes: &zero,
+				ScannerMemoryMB:    &zero,
+				ScannerPidsLimit:   &zero,
+			},
+		},
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.ScanTimeoutMinutes != 20 {
+		t.Fatalf("zero ScanTimeoutMinutes in file must not override env default, got %d", merged.Scanner.ScanTimeoutMinutes)
+	}
+	if merged.Scanner.BulkTimeoutMinutes != 120 {
+		t.Fatalf("zero BulkTimeoutMinutes in file must not override env default, got %d", merged.Scanner.BulkTimeoutMinutes)
+	}
+	if merged.Scanner.ScannerMemoryMB != 2048 {
+		t.Fatalf("zero ScannerMemoryMB in file must not override env default, got %d", merged.Scanner.ScannerMemoryMB)
+	}
+	if merged.Scanner.ScannerPidsLimit != 512 {
+		t.Fatalf("zero ScannerPidsLimit in file must not override env default, got %d", merged.Scanner.ScannerPidsLimit)
+	}
+}
+
+// TestScannerMergeResourceLimitsNilFileFieldsPreserveEnv verifies that nil
+// pointer-int file fields leave the env-derived values unchanged.
+func TestScannerMergeResourceLimitsNilFileFieldsPreserveEnv(t *testing.T) {
+	envCfg := NewConfig()
+	envCfg.Scanner.ScanTimeoutMinutes = 30
+	envCfg.Scanner.BulkTimeoutMinutes = 90
+	envCfg.Scanner.ScannerMemoryMB = 1024
+	envCfg.Scanner.ScannerPidsLimit = 128
+
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   envCfg,
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+		fileConfig: FileConfig{
+			Scanner: &FileScannerConfig{
+				// all resource-limit fields deliberately nil
+			},
+		},
+	}
+	m.merged, m.sources = m.merge()
+
+	merged := m.Config()
+	if merged.Scanner.ScanTimeoutMinutes != 30 {
+		t.Fatalf("nil file field must preserve env ScanTimeoutMinutes=30, got %d", merged.Scanner.ScanTimeoutMinutes)
+	}
+	if merged.Scanner.BulkTimeoutMinutes != 90 {
+		t.Fatalf("nil file field must preserve env BulkTimeoutMinutes=90, got %d", merged.Scanner.BulkTimeoutMinutes)
+	}
+	if merged.Scanner.ScannerMemoryMB != 1024 {
+		t.Fatalf("nil file field must preserve env ScannerMemoryMB=1024, got %d", merged.Scanner.ScannerMemoryMB)
+	}
+	if merged.Scanner.ScannerPidsLimit != 128 {
+		t.Fatalf("nil file field must preserve env ScannerPidsLimit=128, got %d", merged.Scanner.ScannerPidsLimit)
+	}
+}
+
+// TestUpdateScannerConfigPersistsResourceLimits verifies that UpdateScannerConfig
+// persists the new resource-limit pointer-int fields and reflects them in Config().
+func TestUpdateScannerConfigPersistsResourceLimits(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	timeout := 60
+	bulk := 180
+	mem := 4096
+	pids := 768
+	scanner := &FileScannerConfig{
+		ScanTimeoutMinutes: &timeout,
+		BulkTimeoutMinutes: &bulk,
+		ScannerMemoryMB:    &mem,
+		ScannerPidsLimit:   &pids,
+	}
+
+	if err := m.UpdateScannerConfig(scanner); err != nil {
+		t.Fatalf("UpdateScannerConfig returned unexpected error: %v", err)
+	}
+
+	merged := m.Config()
+	if merged.Scanner.ScanTimeoutMinutes != 60 {
+		t.Fatalf("expected ScanTimeoutMinutes=60, got %d", merged.Scanner.ScanTimeoutMinutes)
+	}
+	if merged.Scanner.BulkTimeoutMinutes != 180 {
+		t.Fatalf("expected BulkTimeoutMinutes=180, got %d", merged.Scanner.BulkTimeoutMinutes)
+	}
+	if merged.Scanner.ScannerMemoryMB != 4096 {
+		t.Fatalf("expected ScannerMemoryMB=4096, got %d", merged.Scanner.ScannerMemoryMB)
+	}
+	if merged.Scanner.ScannerPidsLimit != 768 {
+		t.Fatalf("expected ScannerPidsLimit=768, got %d", merged.Scanner.ScannerPidsLimit)
+	}
+}
+
+// TestNewManagerSetsEnvSnapshotForResourceLimitVars verifies that NewManager
+// recognises each of the resource-limit env vars when deciding whether
+// scanner config comes from the environment. Each var is exercised in its
+// own subtest so a regression on any single one is reported individually.
+func TestNewManagerSetsEnvSnapshotForResourceLimitVars(t *testing.T) {
+	resourceLimitVars := []string{
+		"SCANNER_TIMEOUT_MINUTES",
+		"SCANNER_BULK_TIMEOUT_MINUTES",
+		"SCANNER_MEMORY_MB",
+		"SCANNER_PIDS_LIMIT",
+	}
+
+	for _, varName := range resourceLimitVars {
+		t.Run(varName, func(t *testing.T) {
+			t.Setenv(varName, "1")
+
+			m := NewManager()
+			if !m.envSnapshot.ScannerSet {
+				t.Fatalf("expected ScannerSet=true when %s is set", varName)
+			}
+		})
+	}
+}

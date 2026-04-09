@@ -108,22 +108,51 @@ type SBOMJob struct {
 	Host      string        `json:"host"`
 	Format    SBOMFormat    `json:"format"`
 	Status    ScanJobStatus `json:"status"`
+	ResultID  string        `json:"result_id,omitempty"`
 	FilePath  string        `json:"-"`
 	CreatedAt int64         `json:"created_at"`
 	Error     string        `json:"error,omitempty"`
 }
 
+// SBOMComponent represents a normalized package/component entry from a generated SBOM.
+type SBOMComponent struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Type    string `json:"type"`
+	PURL    string `json:"purl"`
+}
+
+// SBOMResult holds persisted SBOM metadata and flattened components.
+type SBOMResult struct {
+	ID             string          `json:"id"`
+	ImageRef       string          `json:"image_ref"`
+	Host           string          `json:"host"`
+	Format         SBOMFormat      `json:"format"`
+	ComponentCount int             `json:"component_count"`
+	FileSize       int64           `json:"file_size"`
+	StartedAt      int64           `json:"started_at"`
+	CompletedAt    int64           `json:"completed_at"`
+	DurationMs     int64           `json:"duration_ms"`
+	Error          string          `json:"error,omitempty"`
+	FilePath       string          `json:"-"`
+	Components     []SBOMComponent `json:"components,omitempty"`
+}
+
 // ScannerConfig holds scanner configuration
 type ScannerConfig struct {
-	GrypeImage     string             `json:"grypeImage"`
-	TrivyImage     string             `json:"trivyImage"`
-	SyftImage      string             `json:"syftImage"`
-	DefaultScanner ScannerType        `json:"defaultScanner"`
-	GrypeArgs      string             `json:"grypeArgs"`
-	TrivyArgs      string             `json:"trivyArgs"`
-	Notifications  NotificationConfig `json:"notifications"`
-	AutoScan       AutoScanConfig     `json:"autoScan"`
-	ForceRescan    bool               `json:"forceRescan"`
+	GrypeImage         string             `json:"grypeImage"`
+	TrivyImage         string             `json:"trivyImage"`
+	SyftImage          string             `json:"syftImage"`
+	DefaultScanner     ScannerType        `json:"defaultScanner"`
+	GrypeArgs          string             `json:"grypeArgs"`
+	TrivyArgs          string             `json:"trivyArgs"`
+	Notifications      NotificationConfig `json:"notifications"`
+	AutoScan           AutoScanConfig     `json:"autoScan"`
+	ForceRescan        bool               `json:"forceRescan"`
+	ScanTimeoutMinutes int                `json:"scanTimeoutMinutes"`
+	BulkTimeoutMinutes int                `json:"bulkTimeoutMinutes"`
+	ScannerMemoryMB    int                `json:"scannerMemoryMB"`
+	ScannerPidsLimit   int                `json:"scannerPidsLimit"`
 }
 
 // NotificationConfig holds notification webhook configuration
