@@ -15,18 +15,23 @@
 [![Discord](https://img.shields.io/discord/994247717368909884?logo=discord&style=flat-square)](https://discord.gg/HDCt9MjyMJ)
 </div>
 
-| Docker Image | linux/amd64 Size |
-| --- | --- |
-| `hhftechnology/vps-monitor:latest` | <!-- VPS_MONITOR_IMAGE_SIZE_START -->pending<!-- VPS_MONITOR_IMAGE_SIZE_END --> |
-
 <div align="center">
 <a href="https://apps.apple.com/us/app/#"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=com.vps.monitor.mobile"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
 </div>
 
+<div align="center">
 
+| Docker Image | linux/amd64 Size |
+| --- | --- |
+| `hhftechnology/vps-monitor:latest` | <!-- VPS_MONITOR_IMAGE_SIZE_START -->pending<!-- VPS_MONITOR_IMAGE_SIZE_END --> |
+</div>
+
+<div align="center">
 <img width="1735" height="1058" alt="image" src="https://github.com/user-attachments/assets/35241a4e-d523-40eb-9455-ed33ab837b66" />
 
 <img width="1735" height="1467" alt="image" src="https://github.com/user-attachments/assets/ccb23590-8ecd-4c89-89ea-68a24db69418" />
+
+</div>
 
 ## Stats
 
