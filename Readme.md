@@ -23,8 +23,7 @@
 
 | Docker Image | linux/amd64 Size |
 | --- | --- |
-| `hhftechnology/vps-monitor:latest` | <!-- VPS_MONITOR_IMAGE_SIZE_START -->pending<!-- VPS_MONITOR_IMAGE_SIZE_END --> |
-</div>
+| `hhftechnology/vps-monitor:latest` | <!-- VPS_MONITOR_IMAGE_SIZE_START -->108MB<!-- VPS_MONITOR_IMAGE_SIZE_END --> |
 
 <div align="center">
 <img width="1735" height="1058" alt="image" src="https://github.com/user-attachments/assets/35241a4e-d523-40eb-9455-ed33ab837b66" />
