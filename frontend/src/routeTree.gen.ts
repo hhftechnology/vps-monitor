@@ -86,8 +86,8 @@ export interface FileRoutesByFullPath {
   '/alerts': typeof AlertsIndexRoute
   '/images': typeof ImagesIndexRoute
   '/networks': typeof NetworksIndexRoute
-  '/scan-history': typeof ScanHistoryIndexRoute
   '/sbom-history': typeof SbomHistoryIndexRoute
+  '/scan-history': typeof ScanHistoryIndexRoute
   '/stats': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
@@ -99,8 +99,8 @@ export interface FileRoutesByTo {
   '/alerts': typeof AlertsIndexRoute
   '/images': typeof ImagesIndexRoute
   '/networks': typeof NetworksIndexRoute
-  '/scan-history': typeof ScanHistoryIndexRoute
   '/sbom-history': typeof SbomHistoryIndexRoute
+  '/scan-history': typeof ScanHistoryIndexRoute
   '/stats': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
@@ -113,8 +113,8 @@ export interface FileRoutesById {
   '/alerts/': typeof AlertsIndexRoute
   '/images/': typeof ImagesIndexRoute
   '/networks/': typeof NetworksIndexRoute
-  '/scan-history/': typeof ScanHistoryIndexRoute
   '/sbom-history/': typeof SbomHistoryIndexRoute
+  '/scan-history/': typeof ScanHistoryIndexRoute
   '/stats/': typeof StatsIndexRoute
   '/containers/$containerId/logs': typeof ContainersContainerIdLogsRoute
 }
@@ -128,8 +128,8 @@ export interface FileRouteTypes {
     | '/alerts'
     | '/images'
     | '/networks'
-    | '/scan-history'
     | '/sbom-history'
+    | '/scan-history'
     | '/stats'
     | '/containers/$containerId/logs'
   fileRoutesByTo: FileRoutesByTo
@@ -141,8 +141,8 @@ export interface FileRouteTypes {
     | '/alerts'
     | '/images'
     | '/networks'
-    | '/scan-history'
     | '/sbom-history'
+    | '/scan-history'
     | '/stats'
     | '/containers/$containerId/logs'
   id:
@@ -154,8 +154,8 @@ export interface FileRouteTypes {
     | '/alerts/'
     | '/images/'
     | '/networks/'
-    | '/scan-history/'
     | '/sbom-history/'
+    | '/scan-history/'
     | '/stats/'
     | '/containers/$containerId/logs'
   fileRoutesById: FileRoutesById
@@ -168,8 +168,8 @@ export interface RootRouteChildren {
   AlertsIndexRoute: typeof AlertsIndexRoute
   ImagesIndexRoute: typeof ImagesIndexRoute
   NetworksIndexRoute: typeof NetworksIndexRoute
-  ScanHistoryIndexRoute: typeof ScanHistoryIndexRoute
   SbomHistoryIndexRoute: typeof SbomHistoryIndexRoute
+  ScanHistoryIndexRoute: typeof ScanHistoryIndexRoute
   StatsIndexRoute: typeof StatsIndexRoute
   ContainersContainerIdLogsRoute: typeof ContainersContainerIdLogsRoute
 }
@@ -264,8 +264,8 @@ const rootRouteChildren: RootRouteChildren = {
   AlertsIndexRoute: AlertsIndexRoute,
   ImagesIndexRoute: ImagesIndexRoute,
   NetworksIndexRoute: NetworksIndexRoute,
-  ScanHistoryIndexRoute: ScanHistoryIndexRoute,
   SbomHistoryIndexRoute: SbomHistoryIndexRoute,
+  ScanHistoryIndexRoute: ScanHistoryIndexRoute,
   StatsIndexRoute: StatsIndexRoute,
   ContainersContainerIdLogsRoute: ContainersContainerIdLogsRoute,
 }
