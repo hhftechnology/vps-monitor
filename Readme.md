@@ -17,7 +17,7 @@
 
 | Docker Image | linux/amd64 Size |
 | --- | --- |
-| `hhftechnology/vps-monitor:latest` | <!-- VPS_MONITOR_IMAGE_SIZE_START -->pending<!-- VPS_MONITOR_IMAGE_SIZE_END --> |
+| `hhftechnology/vps-monitor:latest` | <!-- VPS_MONITOR_IMAGE_SIZE_START -->108MB<!-- VPS_MONITOR_IMAGE_SIZE_END --> |
 
 <div align="center">
 <a href="https://apps.apple.com/us/app/#"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=com.vps.monitor.mobile"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
