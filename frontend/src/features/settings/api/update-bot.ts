@@ -5,6 +5,7 @@ const ENDPOINT = `${API_BASE_URL}/api/v1/settings/bot`;
 
 export interface UpdateBotPayload {
 	enabled: boolean;
+	mode: "polling" | "jwt-relay";
 	telegramToken: string;
 	allowedChatId: string;
 }

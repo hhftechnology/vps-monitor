@@ -726,6 +726,7 @@ func TestUpdateBotConfigPersistsAndMerges(t *testing.T) {
 	enabled := true
 	if err := m.UpdateBotConfig(&FileBotConfig{
 		Enabled:       &enabled,
+		Mode:          BotModeJWTRelay,
 		TelegramToken: "token-1",
 		AllowedChatID: "chat-1",
 	}); err != nil {
@@ -733,7 +734,7 @@ func TestUpdateBotConfigPersistsAndMerges(t *testing.T) {
 	}
 
 	merged := m.Config()
-	if !merged.Bot.Enabled || merged.Bot.TelegramToken != "token-1" || merged.Bot.AllowedChatID != "chat-1" {
+	if !merged.Bot.Enabled || merged.Bot.Mode != BotModeJWTRelay || merged.Bot.TelegramToken != "token-1" || merged.Bot.AllowedChatID != "chat-1" {
 		t.Fatalf("unexpected merged bot config: %+v", merged.Bot)
 	}
 	if m.Sources().Bot != SourceFile {

@@ -41,6 +41,7 @@ type FileNotificationConfig struct {
 
 type FileBotConfig struct {
 	Enabled       *bool  `json:"enabled,omitempty"`
+	Mode          string `json:"mode,omitempty"`
 	TelegramToken string `json:"telegramToken,omitempty"`
 	AllowedChatID string `json:"allowedChatId,omitempty"`
 }
@@ -511,6 +512,9 @@ func (m *Manager) merge() (*Config, ConfigSources) {
 	if fc := m.fileConfig.Bot; fc != nil {
 		if fc.Enabled != nil {
 			cfg.Bot.Enabled = *fc.Enabled
+		}
+		if fc.Mode != "" {
+			cfg.Bot.Mode = NormalizeBotMode(fc.Mode)
 		}
 		if fc.TelegramToken != "" {
 			cfg.Bot.TelegramToken = fc.TelegramToken

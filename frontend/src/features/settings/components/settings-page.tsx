@@ -45,7 +45,11 @@ export function SettingsPage() {
 			<CoolifyHostsSection config={data.coolifyHosts} />
 			<ReadOnlySection config={data.readOnly} />
 			<AuthSection config={data.auth} />
-			<BotSection config={data.bot} disabled={data.readOnly.value} />
+			<BotSection
+				config={data.bot}
+				disabled={data.readOnly.value}
+				authEnabled={data.auth.enabled}
+			/>
 			<ScannerSection disabled={data.readOnly.value} />
 		</div>
 	);

@@ -42,10 +42,16 @@ type AlertConfig struct {
 
 type BotConfig struct {
 	Enabled       bool
+	Mode          string
 	TelegramToken string
 	AllowedChatID string
 	PollInterval  time.Duration
 }
+
+const (
+	BotModePolling  = "polling"
+	BotModeJWTRelay = "jwt-relay"
+)
 
 // ScannerConfig holds configuration for vulnerability scanning
 type ScannerConfig struct {
@@ -156,6 +162,7 @@ func parseAlertConfig() AlertConfig {
 func parseBotConfig() BotConfig {
 	cfg := BotConfig{
 		Enabled:       os.Getenv("BOT_ENABLED") == "true",
+		Mode:          NormalizeBotMode(os.Getenv("BOT_MODE")),
 		TelegramToken: strings.TrimSpace(os.Getenv("BOT_TELEGRAM_TOKEN")),
 		AllowedChatID: strings.TrimSpace(os.Getenv("BOT_ALLOWED_CHAT_ID")),
 		PollInterval:  15 * time.Second,
@@ -172,6 +179,17 @@ func parseBotConfig() BotConfig {
 	}
 
 	return cfg
+}
+
+func NormalizeBotMode(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "", BotModePolling:
+		return BotModePolling
+	case BotModeJWTRelay:
+		return BotModeJWTRelay
+	default:
+		return BotModePolling
+	}
 }
 
 func parseCoolifyHostConfigs() []CoolifyHostConfig {

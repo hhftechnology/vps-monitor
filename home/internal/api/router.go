@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -19,6 +20,10 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/static"
 )
 
+type botRelayService interface {
+	RelayCommand(ctx context.Context, chatID, text string) (string, error)
+}
+
 // Buffer pool for JSON encoding to reduce allocations
 var jsonBufferPool = sync.Pool{
 	New: func() interface{} {
@@ -32,6 +37,7 @@ type APIRouter struct {
 	manager       *config.Manager
 	alertHandlers *AlertHandlers
 	scanHandlers  *ScanHandlers
+	botService    botRelayService
 }
 
 // RouterOptions contains optional dependencies for the router
@@ -39,6 +45,7 @@ type RouterOptions struct {
 	AlertMonitor   *alerts.Monitor
 	ScannerService *scanner.ScannerService
 	AutoScanner    *scanner.AutoScanner
+	BotService     botRelayService
 }
 
 func NewRouter(registry *services.Registry, manager *config.Manager, opts *RouterOptions) *chi.Mux {
@@ -48,6 +55,9 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 		router:   chi.NewRouter(),
 		registry: registry,
 		manager:  manager,
+	}
+	if opts != nil {
+		r.botService = opts.BotService
 	}
 
 	// Set up scan handlers
@@ -130,6 +140,7 @@ func (ar *APIRouter) Routes() *chi.Mux {
 			ar.registerImageRoutes(protected)
 			ar.registerNetworkRoutes(protected)
 			ar.registerAlertRoutes(protected)
+			ar.registerBotRoutes(protected)
 			ar.registerScanRoutes(protected)
 		})
 	})
@@ -206,6 +217,14 @@ func (ar *APIRouter) registerAlertRoutes(r chi.Router) {
 	r.Get("/alerts/config", ar.alertHandlers.GetAlertConfig)
 	r.Post("/alerts/{id}/acknowledge", ar.alertHandlers.AcknowledgeAlert)
 	r.Post("/alerts/acknowledge-all", ar.alertHandlers.AcknowledgeAllAlerts)
+}
+
+func (ar *APIRouter) registerBotRoutes(r chi.Router) {
+	if ar.botService == nil {
+		return
+	}
+
+	r.Post("/bot/relay/command", ar.RelayBotCommand)
 }
 
 func (ar *APIRouter) registerScanRoutes(r chi.Router) {

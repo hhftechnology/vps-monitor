@@ -65,7 +65,7 @@ func (s *Service) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.running || !isConfigured(s.cfg) {
+	if s.running || !isConfigured(s.cfg) || s.cfg.Mode != config.BotModePolling {
 		return
 	}
 
@@ -102,6 +102,38 @@ func (s *Service) UpdateConfig(cfg config.BotConfig) {
 	s.mu.Unlock()
 
 	s.Start()
+}
+
+func (s *Service) RelayCommand(ctx context.Context, chatID, text string) (string, error) {
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	if cfg.Mode != config.BotModeJWTRelay {
+		return "", fmt.Errorf("bot relay mode is disabled")
+	}
+	if !isConfigured(cfg) {
+		return "", fmt.Errorf("telegram token and allowed chat id are required")
+	}
+
+	targetChatID := strings.TrimSpace(chatID)
+	if targetChatID == "" {
+		targetChatID = cfg.AllowedChatID
+	}
+	if cfg.AllowedChatID != "" && targetChatID != cfg.AllowedChatID {
+		return "", fmt.Errorf("chat id is not allowed")
+	}
+
+	reply := s.handleCommand(strings.TrimSpace(text))
+	if reply == "" {
+		return "", nil
+	}
+
+	if err := s.sendMessage(ctx, cfg.TelegramToken, targetChatID, reply); err != nil {
+		return "", err
+	}
+
+	return reply, nil
 }
 
 func (s *Service) SendTestMessage(ctx context.Context, token, chatID string) error {

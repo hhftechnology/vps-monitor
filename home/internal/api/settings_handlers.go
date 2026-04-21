@@ -78,8 +78,11 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 	botResp := map[string]any{
 		"source":        sources.Bot,
 		"enabled":       cfg.Bot.Enabled,
+		"mode":          cfg.Bot.Mode,
 		"telegramToken": "",
 		"allowedChatId": cfg.Bot.AllowedChatID,
+		"relayPath":     "/api/v1/bot/relay/command",
+		"relayUsesAuth": true,
 	}
 	if sources.Bot == config.SourceEnv && cfg.Bot.TelegramToken != "" {
 		botResp["telegramToken"] = secretMask
@@ -288,6 +291,7 @@ func (ar *APIRouter) UpdateAuth(w http.ResponseWriter, r *http.Request) {
 func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled       bool   `json:"enabled"`
+		Mode          string `json:"mode"`
 		TelegramToken string `json:"telegramToken"`
 		AllowedChatID string `json:"allowedChatId"`
 	}
@@ -298,6 +302,10 @@ func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 
 	token := strings.TrimSpace(req.TelegramToken)
 	chatID := strings.TrimSpace(req.AllowedChatID)
+	mode := config.BotModePolling
+	if req.Mode != "" {
+		mode = config.NormalizeBotMode(req.Mode)
+	}
 
 	if token == secretMask {
 		fc := ar.manager.FileConfigSnapshot()
@@ -310,9 +318,17 @@ func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "telegramToken and allowedChatId are required when enabling bot", http.StatusBadRequest)
 		return
 	}
+	if req.Enabled && mode == config.BotModeJWTRelay {
+		authSvc := ar.registry.Auth()
+		if authSvc == nil || authSvc.IsDisabled() {
+			http.Error(w, "auth must be enabled before using jwt-relay bot mode", http.StatusConflict)
+			return
+		}
+	}
 
 	err := ar.manager.UpdateBotConfig(&config.FileBotConfig{
 		Enabled:       &req.Enabled,
+		Mode:          mode,
 		TelegramToken: token,
 		AllowedChatID: chatID,
 	})

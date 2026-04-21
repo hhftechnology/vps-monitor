@@ -174,6 +174,7 @@ func main() {
 
 	routerOpts := &api.RouterOptions{
 		AlertMonitor:   alertMonitor,
+		BotService:     telegramBot,
 		ScannerService: scannerService,
 		AutoScanner:    autoScanner,
 	}
