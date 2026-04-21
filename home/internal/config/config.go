@@ -37,6 +37,14 @@ type AlertConfig struct {
 	CPUThreshold    float64       // 0-100, alert when exceeded
 	MemoryThreshold float64       // 0-100, alert when exceeded
 	CheckInterval   time.Duration // How often to check thresholds
+	AlertsFilter    string
+}
+
+type BotConfig struct {
+	Enabled       bool
+	TelegramToken string
+	AllowedChatID string
+	PollInterval  time.Duration
 }
 
 // ScannerConfig holds configuration for vulnerability scanning
@@ -68,6 +76,7 @@ type Config struct {
 	DockerHosts  []DockerHost
 	CoolifyHosts []CoolifyHostConfig
 	Alerts       AlertConfig
+	Bot          BotConfig
 	Scanner      ScannerConfig
 }
 
@@ -77,6 +86,7 @@ func NewConfig() *Config {
 	dockerHosts := parseDockerHosts()
 	coolifyHosts := parseCoolifyHostConfigs()
 	alertConfig := parseAlertConfig()
+	botConfig := parseBotConfig()
 
 	// if we don't have any docker hosts, we should default back to
 	// the unix socket on the machine running vps-monitor.
@@ -103,6 +113,7 @@ func NewConfig() *Config {
 		DockerHosts:  dockerHosts,
 		CoolifyHosts: coolifyHosts,
 		Alerts:       alertConfig,
+		Bot:          botConfig,
 		Scanner:      scannerConfig,
 	}
 }
@@ -114,6 +125,7 @@ func parseAlertConfig() AlertConfig {
 		CPUThreshold:    80, // Default: 80%
 		MemoryThreshold: 90, // Default: 90%
 		CheckInterval:   30 * time.Second,
+		AlertsFilter:    "all",
 	}
 
 	if cpuStr := os.Getenv("ALERTS_CPU_THRESHOLD"); cpuStr != "" {
@@ -134,7 +146,32 @@ func parseAlertConfig() AlertConfig {
 		}
 	}
 
+	if filter := strings.TrimSpace(os.Getenv("ALERTS_FILTER")); filter != "" {
+		config.AlertsFilter = filter
+	}
+
 	return config
+}
+
+func parseBotConfig() BotConfig {
+	cfg := BotConfig{
+		Enabled:       os.Getenv("BOT_ENABLED") == "true",
+		TelegramToken: strings.TrimSpace(os.Getenv("BOT_TELEGRAM_TOKEN")),
+		AllowedChatID: strings.TrimSpace(os.Getenv("BOT_ALLOWED_CHAT_ID")),
+		PollInterval:  15 * time.Second,
+	}
+
+	if intervalStr := strings.TrimSpace(os.Getenv("BOT_POLL_INTERVAL")); intervalStr != "" {
+		if interval, err := time.ParseDuration(intervalStr); err == nil && interval > 0 {
+			cfg.PollInterval = interval
+		}
+	}
+
+	if cfg.TelegramToken == "" || cfg.AllowedChatID == "" {
+		cfg.Enabled = false
+	}
+
+	return cfg
 }
 
 func parseCoolifyHostConfigs() []CoolifyHostConfig {

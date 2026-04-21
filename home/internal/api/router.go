@@ -68,6 +68,7 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 			MemoryThreshold: cfg.Alerts.MemoryThreshold,
 			CheckInterval:   cfg.Alerts.CheckInterval.String(),
 			WebhookEnabled:  cfg.Alerts.WebhookURL != "",
+			AlertsFilter:    cfg.Alerts.AlertsFilter,
 		})
 	} else {
 		r.alertHandlers = NewAlertHandlers(nil, &models.AlertConfigResponse{
@@ -76,6 +77,7 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 			MemoryThreshold: cfg.Alerts.MemoryThreshold,
 			CheckInterval:   cfg.Alerts.CheckInterval.String(),
 			WebhookEnabled:  cfg.Alerts.WebhookURL != "",
+			AlertsFilter:    cfg.Alerts.AlertsFilter,
 		})
 	}
 
@@ -154,6 +156,7 @@ func (ar *APIRouter) registerContainerRoutes(r chi.Router) {
 		r.Get("/env", ar.GetEnvVariables)
 		r.Get("/stats", ar.HandleContainerStats)
 		r.Get("/stats/once", ar.GetContainerStatsOnce)
+		r.Get("/stats/history", ar.GetContainerHistoricalStats)
 
 		// Mutating routes (blocked in read-only mode)
 		r.Group(func(mutating chi.Router) {
@@ -253,6 +256,8 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 		r.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
 		r.Put("/read-only", ar.UpdateReadOnly)
 		r.Put("/auth", ar.UpdateAuth)
+		r.Put("/bot", ar.UpdateBot)
+		r.Post("/test/bot", ar.TestBot)
 		r.Post("/test/docker-host", ar.TestDockerHost)
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
 		if ar.scanHandlers != nil {

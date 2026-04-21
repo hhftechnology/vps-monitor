@@ -8,6 +8,7 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/alerts"
 	"github.com/hhftechnology/vps-monitor/internal/api"
 	"github.com/hhftechnology/vps-monitor/internal/auth"
+	"github.com/hhftechnology/vps-monitor/internal/bot"
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
@@ -83,6 +84,10 @@ func main() {
 	}
 
 	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
+
+	telegramBot := bot.NewService(registry, cfg.Bot)
+	telegramBot.Start()
+	defer telegramBot.Stop()
 
 	// Scanner database
 	dbPath := "/data/scanner.db"
@@ -161,6 +166,8 @@ func main() {
 		} else {
 			autoScanner.Stop()
 		}
+
+		telegramBot.UpdateConfig(newCfg.Bot)
 
 		log.Println("Configuration reloaded successfully")
 	})

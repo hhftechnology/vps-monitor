@@ -77,6 +77,22 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 		allContainers = append(allContainers, containers...)
 	}
 
+	if alertMonitor := ar.registry.Alerts(); alertMonitor != nil {
+		history := alertMonitor.GetStatsHistory()
+		for i := range allContainers {
+			cpu1h, memory1h, has1h := history.Get1hAverages(allContainers[i].Host, allContainers[i].ID)
+			cpu12h, memory12h, has12h := history.Get12hAverages(allContainers[i].Host, allContainers[i].ID)
+			if has1h || has12h {
+				allContainers[i].HistoricalStats = &models.HistoricalStats{
+					CPU1h:     cpu1h,
+					Memory1h:  memory1h,
+					CPU12h:    cpu12h,
+					Memory12h: memory12h,
+				}
+			}
+		}
+	}
+
 	// Build host errors list for the frontend (graceful partial results)
 	hostErrorMessages := make([]map[string]string, 0, len(hostErrors))
 	for _, he := range hostErrors {
@@ -214,13 +230,13 @@ func (ar *APIRouter) StopContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := dockerClient.StopContainer(r.Context(), host, id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"message": "Container stopped",
+	WriteJsonResponse(w, http.StatusAccepted, map[string]any{
+		"message": "Container stop initiated",
+		"status":  "pending",
+	})
+
+	go ar.runAsyncContainerAction(host, id, "stop", func(ctx context.Context) error {
+		return dockerClient.StopContainer(ctx, host, id)
 	})
 }
 
@@ -240,13 +256,13 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := dockerClient.RestartContainer(r.Context(), host, id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"message": "Container restarted",
+	WriteJsonResponse(w, http.StatusAccepted, map[string]any{
+		"message": "Container restart initiated",
+		"status":  "pending",
+	})
+
+	go ar.runAsyncContainerAction(host, id, "restart", func(ctx context.Context) error {
+		return dockerClient.RestartContainer(ctx, host, id)
 	})
 }
 
@@ -266,14 +282,51 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := dockerClient.RemoveContainer(r.Context(), host, id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	WriteJsonResponse(w, http.StatusAccepted, map[string]any{
+		"message": "Container remove initiated",
+		"status":  "pending",
+	})
+
+	go ar.runAsyncContainerAction(host, id, "remove", func(ctx context.Context) error {
+		return dockerClient.RemoveContainer(ctx, host, id)
+	})
+}
+
+func (ar *APIRouter) GetContainerHistoricalStats(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	host := r.URL.Query().Get("host")
+
+	alertMonitor := ar.registry.Alerts()
+	if alertMonitor == nil {
+		http.Error(w, "stats history not available", http.StatusServiceUnavailable)
 		return
 	}
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"message": "Container removed",
+
+	if host == "" {
+		http.Error(w, "host parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	history := alertMonitor.GetStatsHistory()
+	cpu1h, memory1h, has1h := history.Get1hAverages(host, id)
+	cpu12h, memory12h, has12h := history.Get12hAverages(host, id)
+
+	WriteJsonResponse(w, http.StatusOK, models.HistoricalAverages{
+		CPU1h:     cpu1h,
+		Memory1h:  memory1h,
+		CPU12h:    cpu12h,
+		Memory12h: memory12h,
+		HasData:   has1h || has12h,
 	})
+}
+
+func (ar *APIRouter) runAsyncContainerAction(host, id, action string, fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	if err := fn(ctx); err != nil {
+		log.Printf("failed to %s container %s on host %s: %v", action, id, host, err)
+	}
 }
 
 func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Request) {

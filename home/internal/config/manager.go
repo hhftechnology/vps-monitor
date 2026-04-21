@@ -39,12 +39,19 @@ type FileNotificationConfig struct {
 	MinSeverity       string `json:"minSeverity,omitempty"`
 }
 
+type FileBotConfig struct {
+	Enabled       *bool  `json:"enabled,omitempty"`
+	TelegramToken string `json:"telegramToken,omitempty"`
+	AllowedChatID string `json:"allowedChatId,omitempty"`
+}
+
 // FileConfig represents the JSON config file structure.
 type FileConfig struct {
 	DockerHosts  []DockerHost        `json:"dockerHosts,omitempty"`
 	CoolifyHosts []CoolifyHostConfig `json:"coolifyHosts,omitempty"`
 	ReadOnly     *bool               `json:"readOnly,omitempty"`
 	Auth         *FileAuthConfig     `json:"auth,omitempty"`
+	Bot          *FileBotConfig      `json:"bot,omitempty"`
 	Scanner      *FileScannerConfig  `json:"scanner,omitempty"`
 }
 
@@ -66,6 +73,7 @@ type EnvSnapshot struct {
 	CoolifySet     bool
 	ReadOnlySet    bool
 	AuthSet        bool
+	BotSet         bool
 	ScannerSet     bool
 }
 
@@ -88,6 +96,7 @@ type ConfigSources struct {
 	CoolifyHosts Source `json:"coolifyHosts"`
 	ReadOnly     Source `json:"readOnly"`
 	Auth         Source `json:"auth"`
+	Bot          Source `json:"bot"`
 }
 
 // NewManager creates a config manager that loads from env vars and an optional file.
@@ -104,6 +113,10 @@ func NewManager() *Manager {
 		AuthSet: os.Getenv("JWT_SECRET") != "" ||
 			os.Getenv("ADMIN_USERNAME") != "" ||
 			os.Getenv("ADMIN_PASSWORD") != "",
+		BotSet: os.Getenv("BOT_TELEGRAM_TOKEN") != "" ||
+			os.Getenv("BOT_ALLOWED_CHAT_ID") != "" ||
+			os.Getenv("BOT_ENABLED") != "" ||
+			os.Getenv("BOT_POLL_INTERVAL") != "",
 		ScannerSet: os.Getenv("SCANNER_GRYPE_IMAGE") != "" ||
 			os.Getenv("SCANNER_TRIVY_IMAGE") != "" ||
 			os.Getenv("SCANNER_SYFT_IMAGE") != "" ||
@@ -142,6 +155,25 @@ func NewManager() *Manager {
 	m.merged, m.sources = m.merge()
 
 	return m
+}
+
+func (m *Manager) UpdateBotConfig(bot *FileBotConfig) error {
+	m.mu.Lock()
+
+	if m.envSnapshot.BotSet {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: bot is configured via environment variables and cannot be changed from the UI", ErrEnvironmentConfigured)
+	}
+
+	oldBot := m.fileConfig.Bot
+	m.fileConfig.Bot = bot
+	if err := m.persist(); err != nil {
+		m.fileConfig.Bot = oldBot
+		m.mu.Unlock()
+		return err
+	}
+	m.remerge()
+	return nil
 }
 
 // Config returns the current merged config (thread-safe).
@@ -473,6 +505,31 @@ func (m *Manager) merge() (*Config, ConfigSources) {
 		sources.Auth = SourceFile
 	} else {
 		sources.Auth = SourceDefault
+	}
+
+	cfg.Bot = m.envConfig.Bot
+	if fc := m.fileConfig.Bot; fc != nil {
+		if fc.Enabled != nil {
+			cfg.Bot.Enabled = *fc.Enabled
+		}
+		if fc.TelegramToken != "" {
+			cfg.Bot.TelegramToken = fc.TelegramToken
+		}
+		if fc.AllowedChatID != "" {
+			cfg.Bot.AllowedChatID = fc.AllowedChatID
+		}
+	}
+	if cfg.Bot.TelegramToken == "" || cfg.Bot.AllowedChatID == "" {
+		cfg.Bot.Enabled = false
+	}
+	if m.envSnapshot.BotSet && m.fileConfig.Bot != nil {
+		sources.Bot = SourceMixed
+	} else if m.envSnapshot.BotSet {
+		sources.Bot = SourceEnv
+	} else if m.fileConfig.Bot != nil {
+		sources.Bot = SourceFile
+	} else {
+		sources.Bot = SourceDefault
 	}
 
 	// Scanner: start with env config, override with file config where set

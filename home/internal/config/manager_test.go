@@ -714,3 +714,29 @@ func TestNewManagerSetsEnvSnapshotForResourceLimitVars(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateBotConfigPersistsAndMerges(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	enabled := true
+	if err := m.UpdateBotConfig(&FileBotConfig{
+		Enabled:       &enabled,
+		TelegramToken: "token-1",
+		AllowedChatID: "chat-1",
+	}); err != nil {
+		t.Fatalf("UpdateBotConfig returned error: %v", err)
+	}
+
+	merged := m.Config()
+	if !merged.Bot.Enabled || merged.Bot.TelegramToken != "token-1" || merged.Bot.AllowedChatID != "chat-1" {
+		t.Fatalf("unexpected merged bot config: %+v", merged.Bot)
+	}
+	if m.Sources().Bot != SourceFile {
+		t.Fatalf("expected bot source to be file, got %s", m.Sources().Bot)
+	}
+}

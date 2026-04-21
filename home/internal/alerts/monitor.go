@@ -12,6 +12,7 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
 	"github.com/hhftechnology/vps-monitor/internal/models"
+	"github.com/hhftechnology/vps-monitor/internal/stats"
 )
 
 // Monitor handles background monitoring and alerting
@@ -20,6 +21,7 @@ type Monitor struct {
 	dockerMu sync.RWMutex
 	config   *config.AlertConfig
 	history  *AlertHistory
+	stats    *stats.HistoryManager
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
 
@@ -34,6 +36,7 @@ func NewMonitor(dockerClient *docker.MultiHostClient, alertConfig *config.AlertC
 		docker:          dockerClient,
 		config:          alertConfig,
 		history:         NewAlertHistory(100), // Keep last 100 alerts
+		stats:           stats.NewHistoryManager(),
 		stopCh:          make(chan struct{}),
 		containerStates: make(map[string]string),
 	}
@@ -75,6 +78,10 @@ func (m *Monitor) Stop() {
 // GetHistory returns the alert history
 func (m *Monitor) GetHistory() *AlertHistory {
 	return m.history
+}
+
+func (m *Monitor) GetStatsHistory() *stats.HistoryManager {
+	return m.stats
 }
 
 // monitorLoop is the main monitoring loop
@@ -171,6 +178,10 @@ func (m *Monitor) checkContainerStates(ctx context.Context) {
 	for key := range m.containerStates {
 		if _, exists := currentContainers[key]; !exists {
 			delete(m.containerStates, key)
+			parts := strings.SplitN(key, ":", 2)
+			if len(parts) == 2 {
+				m.stats.CleanupContainer(parts[0], parts[1])
+			}
 		}
 	}
 }
@@ -197,6 +208,7 @@ func (m *Monitor) checkResourceThresholds(ctx context.Context) {
 			if err != nil {
 				continue
 			}
+			m.stats.RecordStats(hostName, ctr.ID, *stats)
 
 			containerName := ctr.ID[:12]
 			if len(ctr.Names) > 0 {
@@ -245,6 +257,10 @@ func (m *Monitor) triggerAlert(alert models.Alert) {
 
 	// Send webhook
 	if m.config.WebhookURL != "" {
+		if m.config.AlertsFilter == "critical" && !isCriticalAlert(alert) {
+			return
+		}
+
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -254,4 +270,8 @@ func (m *Monitor) triggerAlert(alert models.Alert) {
 			}
 		}()
 	}
+}
+
+func isCriticalAlert(alert models.Alert) bool {
+	return alert.Type == models.AlertCPUThreshold || alert.Type == models.AlertMemoryThreshold
 }

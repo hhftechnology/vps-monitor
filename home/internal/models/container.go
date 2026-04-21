@@ -2,16 +2,24 @@ package models
 
 // ContainerInfo represents the minimal container information exposed by the API
 type ContainerInfo struct {
-	ID      string            `json:"id"`
-	Names   []string          `json:"names"`
-	Image   string            `json:"image"`
-	ImageID string            `json:"image_id"`
-	Command string            `json:"command"`
-	Created int64             `json:"created"`
-	State   string            `json:"state"`
-	Status  string            `json:"status"`
-	Labels  map[string]string `json:"labels,omitempty"`
-	Host    string            `json:"host"`
+	ID              string            `json:"id"`
+	Names           []string          `json:"names"`
+	Image           string            `json:"image"`
+	ImageID         string            `json:"image_id"`
+	Command         string            `json:"command"`
+	Created         int64             `json:"created"`
+	State           string            `json:"state"`
+	Status          string            `json:"status"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Host            string            `json:"host"`
+	HistoricalStats *HistoricalStats  `json:"historical_stats,omitempty"`
+}
+
+type HistoricalStats struct {
+	CPU1h     float64 `json:"cpu_1h"`
+	Memory1h  float64 `json:"memory_1h"`
+	CPU12h    float64 `json:"cpu_12h"`
+	Memory12h float64 `json:"memory_12h"`
 }
 
 // LogOptions represents options for fetching container logs

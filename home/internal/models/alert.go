@@ -31,4 +31,5 @@ type AlertConfigResponse struct {
 	MemoryThreshold float64 `json:"memory_threshold"`
 	CheckInterval   string  `json:"check_interval"`
 	WebhookEnabled  bool    `json:"webhook_enabled"`
+	AlertsFilter    string  `json:"alerts_filter"`
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/auth"
+	"github.com/hhftechnology/vps-monitor/internal/bot"
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
@@ -74,6 +75,18 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 		authResp["passwordConfigured"] = fc.Auth.AdminPasswordHash != ""
 	}
 
+	botResp := map[string]any{
+		"source":        sources.Bot,
+		"enabled":       cfg.Bot.Enabled,
+		"telegramToken": "",
+		"allowedChatId": cfg.Bot.AllowedChatID,
+	}
+	if sources.Bot == config.SourceEnv && cfg.Bot.TelegramToken != "" {
+		botResp["telegramToken"] = secretMask
+	} else if fc.Bot != nil && fc.Bot.TelegramToken != "" {
+		botResp["telegramToken"] = secretMask
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"dockerHosts": map[string]any{
 			"source": sources.DockerHosts,
@@ -88,6 +101,7 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 			"value":  cfg.ReadOnly,
 		},
 		"auth": authResp,
+		"bot":  botResp,
 	})
 }
 
@@ -269,6 +283,78 @@ func (ar *APIRouter) UpdateAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{"message": "Auth settings updated"})
+}
+
+func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled       bool   `json:"enabled"`
+		TelegramToken string `json:"telegramToken"`
+		AllowedChatID string `json:"allowedChatId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	token := strings.TrimSpace(req.TelegramToken)
+	chatID := strings.TrimSpace(req.AllowedChatID)
+
+	if token == secretMask {
+		fc := ar.manager.FileConfigSnapshot()
+		if fc.Bot != nil {
+			token = fc.Bot.TelegramToken
+		}
+	}
+
+	if req.Enabled && (token == "" || chatID == "") {
+		http.Error(w, "telegramToken and allowedChatId are required when enabling bot", http.StatusBadRequest)
+		return
+	}
+
+	err := ar.manager.UpdateBotConfig(&config.FileBotConfig{
+		Enabled:       &req.Enabled,
+		TelegramToken: token,
+		AllowedChatID: chatID,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), settingsErrorStatus(err))
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{"message": "Bot settings updated"})
+}
+
+func (ar *APIRouter) TestBot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TelegramToken string `json:"telegramToken"`
+		AllowedChatID string `json:"allowedChatId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	token := strings.TrimSpace(req.TelegramToken)
+	if token == secretMask {
+		fc := ar.manager.FileConfigSnapshot()
+		if fc.Bot != nil {
+			token = fc.Bot.TelegramToken
+		}
+	}
+
+	svc := bot.NewService(ar.registry, ar.registry.Config().Bot)
+	if err := svc.SendTestMessage(r.Context(), token, strings.TrimSpace(req.AllowedChatID)); err != nil {
+		WriteJsonResponse(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Test message sent",
+	})
 }
 
 // TestDockerHost handles POST /api/v1/settings/test/docker-host.
