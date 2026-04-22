@@ -9,7 +9,7 @@ export function Footer() {
         </p>
         <div className="flex items-center gap-4">
           <a
-            href="https://play.google.com/store/apps/details?id=com.vps.monitor.mobile"
+            href="#"
             target="_blank"
             rel="noopener noreferrer"
             className="text-muted-foreground transition-colors hover:text-foreground"
@@ -23,7 +23,9 @@ export function Footer() {
             <span className="sr-only">Google Play</span>
           </a>
           <a
-            href="#"
+            href="https://play.google.com/store/apps/details?id=com.vps.monitor.mobile"
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
             <svg className="size-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none">
