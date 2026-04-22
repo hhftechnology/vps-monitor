@@ -74,6 +74,72 @@ const searchParamsConfig = {
 	expanded: parseAsArrayOf(parseAsString).withDefault([]),
 };
 
+type DashboardUrlParams = {
+	search: string;
+	state: string;
+	host: string;
+	sort: SortDirection;
+	sortBy: SortColumn;
+	group: GroupByOption;
+	interval: StatsInterval;
+	page: number;
+	pageSize: number;
+	from: Date | null;
+	to: Date | null;
+	expanded: string[];
+};
+
+function areStringArraysEqual(left: string[], right: string[]) {
+	if (left.length !== right.length) {
+		return false;
+	}
+
+	return left.every((value, index) => value === right[index]);
+}
+
+function areDatesEqual(left: Date | null, right: Date | null) {
+	if (left === right) {
+		return true;
+	}
+
+	if (!left || !right) {
+		return false;
+	}
+
+	return left.getTime() === right.getTime();
+}
+
+function isDashboardParamEqual(
+	currentValue: DashboardUrlParams[keyof DashboardUrlParams],
+	nextValue: DashboardUrlParams[keyof DashboardUrlParams],
+) {
+	if (Array.isArray(currentValue) && Array.isArray(nextValue)) {
+		return areStringArraysEqual(currentValue, nextValue);
+	}
+
+	if (
+		(currentValue instanceof Date || currentValue === null) &&
+		(nextValue instanceof Date || nextValue === null)
+	) {
+		return areDatesEqual(currentValue, nextValue);
+	}
+
+	return currentValue === nextValue;
+}
+
+export function hasDashboardParamChanges(
+	current: DashboardUrlParams,
+	updates: Partial<DashboardUrlParams>,
+) {
+	return Object.entries(updates).some(([key, value]) => {
+		const typedKey = key as keyof DashboardUrlParams;
+		return !isDashboardParamEqual(
+			current[typedKey],
+			value as DashboardUrlParams[keyof DashboardUrlParams],
+		);
+	});
+}
+
 export function useContainersDashboardUrlState() {
 	const [params, setParams] = useQueryStates(searchParamsConfig, {
 		history: "replace",
@@ -94,6 +160,15 @@ export function useContainersDashboardUrlState() {
 		expanded: expandedGroups,
 	} = params;
 
+	const updateParams = useCallback(
+		(updates: Partial<DashboardUrlParams>) => {
+			if (hasDashboardParamChanges(params as DashboardUrlParams, updates)) {
+				setParams(updates);
+			}
+		},
+		[params, setParams],
+	);
+
 	// Convert from/to into DateRange format
 	// Supports open-ended ranges: from without to, to without from, or both
 	const dateRange = useMemo((): DateRange | undefined => {
@@ -106,118 +181,118 @@ export function useContainersDashboardUrlState() {
 
 	const setSearchTerm = useCallback(
 		(value: string) => {
-			setParams({
+			updateParams({
 				search: value,
 				page: 1,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setStateFilter = useCallback(
 		(value: string) => {
 			const normalized = value || "all";
-			setParams({
+			updateParams({
 				state: normalized,
 				page: 1,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setHostFilter = useCallback(
 		(value: string) => {
 			const normalized = value || "all";
-			setParams({
+			updateParams({
 				host: normalized,
 				page: 1,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setSortDirection = useCallback(
 		(value: SortDirection) => {
-			setParams({
+			updateParams({
 				sort: value,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setSortBy = useCallback(
 		(value: SortColumn) => {
-			setParams({
+			updateParams({
 				sortBy: value,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setGroupBy = useCallback(
 		(value: GroupByOption) => {
-			setParams({
+			updateParams({
 				group: value,
 				page: 1,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setStatsInterval = useCallback(
 		(value: StatsInterval) => {
-			setParams({
+			updateParams({
 				interval: value,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setDateRange = useCallback(
 		(range: DateRange | undefined) => {
-			setParams({
+			updateParams({
 				from: range?.from ?? null,
 				to: range?.to ?? null,
 				page: 1,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const clearDateRange = useCallback(() => {
-		setParams({
+		updateParams({
 			from: null,
 			to: null,
 			page: 1,
 		});
-	}, [setParams]);
+	}, [updateParams]);
 
 	const setPage = useCallback(
 		(value: number) => {
-			setParams({
+			updateParams({
 				page: Math.max(1, Math.floor(value)),
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setPageSize = useCallback(
 		(value: number) => {
-			setParams({
+			updateParams({
 				pageSize: Math.max(1, Math.floor(value)),
 				page: 1,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	const setExpandedGroups = useCallback(
 		(value: string[]) => {
-			setParams({
+			updateParams({
 				expanded: value,
 			});
 		},
-		[setParams],
+		[updateParams],
 	);
 
 	return {

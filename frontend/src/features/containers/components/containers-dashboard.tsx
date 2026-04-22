@@ -211,8 +211,9 @@ export function ContainersDashboard() {
 			: Math.ceil(filteredContainers.length / pageSize);
 
 	useEffect(() => {
-		if (page > totalPages) {
-			setPage(totalPages);
+		const nextPage = Math.max(1, totalPages);
+		if (page > nextPage && page !== nextPage) {
+			setPage(nextPage);
 		}
 	}, [page, totalPages, setPage]);
 
@@ -448,11 +449,14 @@ export function ContainersDashboard() {
 	};
 
 	useEffect(() => {
-		setSelectedContainerIds((current) =>
-			current.filter((id) =>
+		setSelectedContainerIds((current) => {
+			const nextSelectedIds = current.filter((id) =>
 				pageItems.some((container) => container.id === id),
-			),
-		);
+			);
+			return nextSelectedIds.length === current.length
+				? current
+				: nextSelectedIds;
+		});
 	}, [pageItems]);
 
 	const confirmActionTitle =
@@ -675,21 +679,25 @@ export function ContainersDashboard() {
 				</AlertDialogContent>
 			</AlertDialog>
 
-			<ContainersLogsSheet
-				container={selectedContainer}
-				isOpen={isLogsSheetOpen}
-				isReadOnly={isReadOnly}
-				onOpenChange={handleLogsSheetOpenChange}
-				onContainerRecreated={handleContainerRecreated}
-			/>
+			{isLogsSheetOpen && selectedContainer ? (
+				<ContainersLogsSheet
+					container={selectedContainer}
+					isOpen={isLogsSheetOpen}
+					isReadOnly={isReadOnly}
+					onOpenChange={handleLogsSheetOpenChange}
+					onContainerRecreated={handleContainerRecreated}
+				/>
+			) : null}
 
-			<ContainerDetailsSheet
-				container={detailsContainer}
-				host={detailsContainer?.host ?? ""}
-				isOpen={isDetailsSheetOpen}
-				onOpenChange={handleDetailsSheetOpenChange}
-				isReadOnly={isReadOnly}
-			/>
+			{isDetailsSheetOpen && detailsContainer ? (
+				<ContainerDetailsSheet
+					container={detailsContainer}
+					host={detailsContainer.host}
+					isOpen={isDetailsSheetOpen}
+					onOpenChange={handleDetailsSheetOpenChange}
+					isReadOnly={isReadOnly}
+				/>
+			) : null}
 		</div>
 	);
 }
