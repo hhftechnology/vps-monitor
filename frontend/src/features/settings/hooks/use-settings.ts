@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getSettings } from "../api/get-settings";
-import { testBot } from "../api/test-bot";
+import { testBot, testDiscordBot } from "../api/test-bot";
 import { testCoolifyHost } from "../api/test-coolify-host";
 import { testDockerHost } from "../api/test-docker-host";
 import { type UpdateAuthPayload, updateAuth } from "../api/update-auth";
@@ -103,5 +103,17 @@ export function useTestBot() {
 			telegramToken: string;
 			allowedChatId: string;
 		}) => testBot(telegramToken, allowedChatId),
+	});
+}
+
+export function useTestDiscordBot() {
+	return useMutation({
+		mutationFn: ({
+			botToken,
+			allowedChannelId,
+		}: {
+			botToken: string;
+			allowedChannelId: string;
+		}) => testDiscordBot(botToken, allowedChannelId),
 	});
 }

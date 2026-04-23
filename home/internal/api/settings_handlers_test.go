@@ -2,13 +2,17 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
+	"github.com/hhftechnology/vps-monitor/internal/services"
 )
 
 type fakeCoolifySyncer struct {
@@ -143,4 +147,144 @@ func TestSettingsErrorStatusDirectErrEnvironmentConfigured(t *testing.T) {
 	if got := settingsErrorStatus(config.ErrEnvironmentConfigured); got != http.StatusConflict {
 		t.Fatalf("expected %d for direct ErrEnvironmentConfigured, got %d", http.StatusConflict, got)
 	}
+}
+
+func TestUpdateBotRejectsIncompleteDiscordConfig(t *testing.T) {
+	manager := newTestSettingsManager(t)
+	router := &APIRouter{
+		manager:  manager,
+		registry: services.NewRegistry(nil, nil, nil, manager.Config(), nil),
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/bot", strings.NewReader(`{
+		"enabled": false,
+		"mode": "polling",
+		"telegramToken": "",
+		"allowedChatId": "",
+		"discord": {
+			"enabled": true,
+			"botToken": "discord-token",
+			"applicationId": "app-1",
+			"allowedChannelId": ""
+		}
+	}`))
+	rec := httptest.NewRecorder()
+
+	router.UpdateBot(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateBotPreservesMaskedDiscordToken(t *testing.T) {
+	manager := newTestSettingsManager(t)
+	router := &APIRouter{
+		manager:  manager,
+		registry: services.NewRegistry(nil, nil, nil, manager.Config(), nil),
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/bot", strings.NewReader(`{
+		"enabled": false,
+		"mode": "polling",
+		"telegramToken": "",
+		"allowedChatId": "",
+		"discord": {
+			"enabled": true,
+			"botToken": "discord-token",
+			"applicationId": "app-1",
+			"guildId": "guild-1",
+			"allowedChannelId": "channel-1"
+		}
+	}`))
+	rec := httptest.NewRecorder()
+	router.UpdateBot(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected initial update to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	router.registry.UpdateConfig(manager.Config())
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/settings/bot", strings.NewReader(`{
+		"enabled": false,
+		"mode": "polling",
+		"telegramToken": "",
+		"allowedChatId": "",
+		"discord": {
+			"enabled": true,
+			"botToken": "••••••••",
+			"applicationId": "app-2",
+			"guildId": "",
+			"allowedChannelId": "channel-2"
+		}
+	}`))
+	rec = httptest.NewRecorder()
+	router.UpdateBot(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected masked update to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := manager.Config().Bot.Discord
+	if got.BotToken != "discord-token" {
+		t.Fatalf("expected masked update to preserve token, got %q", got.BotToken)
+	}
+	if got.ApplicationID != "app-2" || got.AllowedChannelID != "channel-2" || got.GuildID != "" {
+		t.Fatalf("unexpected discord config after masked update: %+v", got)
+	}
+}
+
+func TestGetSettingsMasksDiscordToken(t *testing.T) {
+	manager := newTestSettingsManager(t)
+	enabled := true
+	if err := manager.UpdateBotConfig(&config.FileBotConfig{
+		Discord: &config.FileDiscordBotConfig{
+			Enabled:          &enabled,
+			BotToken:         "discord-token",
+			ApplicationID:    "app-1",
+			AllowedChannelID: "channel-1",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateBotConfig returned error: %v", err)
+	}
+
+	router := &APIRouter{
+		manager:  manager,
+		registry: services.NewRegistry(nil, nil, nil, manager.Config(), nil),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	rec := httptest.NewRecorder()
+
+	router.GetSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Bot struct {
+			Discord struct {
+				BotToken string `json:"botToken"`
+			} `json:"discord"`
+		} `json:"bot"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode settings response: %v", err)
+	}
+	if body.Bot.Discord.BotToken != secretMask {
+		t.Fatalf("expected masked discord token, got %q", body.Bot.Discord.BotToken)
+	}
+}
+
+func newTestSettingsManager(t *testing.T) *config.Manager {
+	t.Helper()
+	t.Setenv("CONFIG_PATH", t.TempDir()+"/config.json")
+	t.Setenv("BOT_ENABLED", "")
+	t.Setenv("BOT_MODE", "")
+	t.Setenv("BOT_TELEGRAM_TOKEN", "")
+	t.Setenv("BOT_ALLOWED_CHAT_ID", "")
+	t.Setenv("BOT_POLL_INTERVAL", "")
+	t.Setenv("BOT_DISCORD_ENABLED", "")
+	t.Setenv("BOT_DISCORD_TOKEN", "")
+	t.Setenv("BOT_DISCORD_APPLICATION_ID", "")
+	t.Setenv("BOT_DISCORD_GUILD_ID", "")
+	t.Setenv("BOT_DISCORD_ALLOWED_CHANNEL_ID", "")
+	return config.NewManager()
 }

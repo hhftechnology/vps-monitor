@@ -43,6 +43,15 @@ export interface BotConfig {
 	allowedChatId: string;
 	relayPath: string;
 	relayUsesAuth: boolean;
+	discord: DiscordBotConfig;
+}
+
+export interface DiscordBotConfig {
+	enabled: boolean;
+	botToken: string;
+	applicationId: string;
+	guildId: string;
+	allowedChannelId: string;
 }
 
 export interface SettingsResponse {

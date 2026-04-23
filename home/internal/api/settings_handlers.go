@@ -83,11 +83,25 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 		"allowedChatId": cfg.Bot.AllowedChatID,
 		"relayPath":     "/api/v1/bot/relay/command",
 		"relayUsesAuth": true,
+		"discord": map[string]any{
+			"enabled":          cfg.Bot.Discord.Enabled,
+			"botToken":         "",
+			"applicationId":    cfg.Bot.Discord.ApplicationID,
+			"guildId":          cfg.Bot.Discord.GuildID,
+			"allowedChannelId": cfg.Bot.Discord.AllowedChannelID,
+		},
 	}
 	if sources.Bot == config.SourceEnv && cfg.Bot.TelegramToken != "" {
 		botResp["telegramToken"] = secretMask
 	} else if fc.Bot != nil && fc.Bot.TelegramToken != "" {
 		botResp["telegramToken"] = secretMask
+	}
+	if discordResp, ok := botResp["discord"].(map[string]any); ok {
+		if sources.Bot == config.SourceEnv && cfg.Bot.Discord.BotToken != "" {
+			discordResp["botToken"] = secretMask
+		} else if fc.Bot != nil && fc.Bot.Discord != nil && fc.Bot.Discord.BotToken != "" {
+			discordResp["botToken"] = secretMask
+		}
 	}
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
@@ -294,6 +308,13 @@ func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 		Mode          string `json:"mode"`
 		TelegramToken string `json:"telegramToken"`
 		AllowedChatID string `json:"allowedChatId"`
+		Discord       *struct {
+			Enabled          bool   `json:"enabled"`
+			BotToken         string `json:"botToken"`
+			ApplicationID    string `json:"applicationId"`
+			GuildID          string `json:"guildId"`
+			AllowedChannelID string `json:"allowedChannelId"`
+		} `json:"discord,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -326,12 +347,44 @@ func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err := ar.manager.UpdateBotConfig(&config.FileBotConfig{
+	fc := ar.manager.FileConfigSnapshot()
+	nextBot := &config.FileBotConfig{
 		Enabled:       &req.Enabled,
 		Mode:          mode,
 		TelegramToken: token,
 		AllowedChatID: chatID,
-	})
+	}
+	if fc.Bot != nil && fc.Bot.Discord != nil {
+		existingDiscord := *fc.Bot.Discord
+		nextBot.Discord = &existingDiscord
+	}
+
+	if req.Discord != nil {
+		discordToken := strings.TrimSpace(req.Discord.BotToken)
+		if discordToken == secretMask {
+			if fc.Bot != nil && fc.Bot.Discord != nil {
+				discordToken = fc.Bot.Discord.BotToken
+			}
+		}
+
+		applicationID := strings.TrimSpace(req.Discord.ApplicationID)
+		guildID := strings.TrimSpace(req.Discord.GuildID)
+		channelID := strings.TrimSpace(req.Discord.AllowedChannelID)
+		if req.Discord.Enabled && (discordToken == "" || applicationID == "" || channelID == "") {
+			http.Error(w, "discord botToken, applicationId, and allowedChannelId are required when enabling Discord bot", http.StatusBadRequest)
+			return
+		}
+
+		nextBot.Discord = &config.FileDiscordBotConfig{
+			Enabled:          &req.Discord.Enabled,
+			BotToken:         discordToken,
+			ApplicationID:    applicationID,
+			GuildID:          guildID,
+			AllowedChannelID: channelID,
+		}
+	}
+
+	err := ar.manager.UpdateBotConfig(nextBot)
 	if err != nil {
 		http.Error(w, err.Error(), settingsErrorStatus(err))
 		return
@@ -370,6 +423,39 @@ func (ar *APIRouter) TestBot(w http.ResponseWriter, r *http.Request) {
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"success": true,
 		"message": "Test message sent",
+	})
+}
+
+func (ar *APIRouter) TestDiscordBot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BotToken         string `json:"botToken"`
+		AllowedChannelID string `json:"allowedChannelId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	token := strings.TrimSpace(req.BotToken)
+	if token == secretMask {
+		fc := ar.manager.FileConfigSnapshot()
+		if fc.Bot != nil && fc.Bot.Discord != nil {
+			token = fc.Bot.Discord.BotToken
+		}
+	}
+
+	svc := bot.NewService(ar.registry, ar.registry.Config().Bot)
+	if err := svc.SendDiscordTestMessage(r.Context(), token, strings.TrimSpace(req.AllowedChannelID)); err != nil {
+		WriteJsonResponse(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Discord test message sent",
 	})
 }
 

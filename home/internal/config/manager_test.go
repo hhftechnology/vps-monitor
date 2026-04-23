@@ -741,3 +741,54 @@ func TestUpdateBotConfigPersistsAndMerges(t *testing.T) {
 		t.Fatalf("expected bot source to be file, got %s", m.Sources().Bot)
 	}
 }
+
+func TestDiscordBotEnvConfigParsesAndDisablesWhenIncomplete(t *testing.T) {
+	t.Setenv("BOT_DISCORD_ENABLED", "true")
+	t.Setenv("BOT_DISCORD_TOKEN", "discord-token")
+	t.Setenv("BOT_DISCORD_APPLICATION_ID", "app-1")
+
+	cfg := NewConfig()
+	if cfg.Bot.Discord.Enabled {
+		t.Fatalf("expected incomplete discord bot config to be disabled: %+v", cfg.Bot.Discord)
+	}
+
+	t.Setenv("BOT_DISCORD_ALLOWED_CHANNEL_ID", "channel-1")
+	cfg = NewConfig()
+	if !cfg.Bot.Discord.Enabled {
+		t.Fatalf("expected complete discord bot config to be enabled: %+v", cfg.Bot.Discord)
+	}
+	if cfg.Bot.Discord.BotToken != "discord-token" || cfg.Bot.Discord.ApplicationID != "app-1" || cfg.Bot.Discord.AllowedChannelID != "channel-1" {
+		t.Fatalf("unexpected discord bot config: %+v", cfg.Bot.Discord)
+	}
+}
+
+func TestUpdateBotConfigPersistsAndMergesDiscord(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	enabled := true
+	if err := m.UpdateBotConfig(&FileBotConfig{
+		Discord: &FileDiscordBotConfig{
+			Enabled:          &enabled,
+			BotToken:         "discord-token",
+			ApplicationID:    "app-1",
+			GuildID:          "guild-1",
+			AllowedChannelID: "channel-1",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateBotConfig returned error: %v", err)
+	}
+
+	merged := m.Config()
+	if !merged.Bot.Discord.Enabled ||
+		merged.Bot.Discord.BotToken != "discord-token" ||
+		merged.Bot.Discord.ApplicationID != "app-1" ||
+		merged.Bot.Discord.GuildID != "guild-1" ||
+		merged.Bot.Discord.AllowedChannelID != "channel-1" {
+		t.Fatalf("unexpected merged discord bot config: %+v", merged.Bot.Discord)
+	}
+}

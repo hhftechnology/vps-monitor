@@ -8,6 +8,13 @@ export interface UpdateBotPayload {
 	mode: "polling" | "jwt-relay";
 	telegramToken: string;
 	allowedChatId: string;
+	discord: {
+		enabled: boolean;
+		botToken: string;
+		applicationId: string;
+		guildId: string;
+		allowedChannelId: string;
+	};
 }
 
 export async function updateBot(payload: UpdateBotPayload): Promise<string> {

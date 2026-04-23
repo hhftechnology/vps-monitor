@@ -46,6 +46,15 @@ type BotConfig struct {
 	TelegramToken string
 	AllowedChatID string
 	PollInterval  time.Duration
+	Discord       DiscordBotConfig
+}
+
+type DiscordBotConfig struct {
+	Enabled          bool
+	BotToken         string
+	ApplicationID    string
+	GuildID          string
+	AllowedChannelID string
 }
 
 const (
@@ -166,6 +175,13 @@ func parseBotConfig() BotConfig {
 		TelegramToken: strings.TrimSpace(os.Getenv("BOT_TELEGRAM_TOKEN")),
 		AllowedChatID: strings.TrimSpace(os.Getenv("BOT_ALLOWED_CHAT_ID")),
 		PollInterval:  15 * time.Second,
+		Discord: DiscordBotConfig{
+			Enabled:          os.Getenv("BOT_DISCORD_ENABLED") == "true",
+			BotToken:         strings.TrimSpace(os.Getenv("BOT_DISCORD_TOKEN")),
+			ApplicationID:    strings.TrimSpace(os.Getenv("BOT_DISCORD_APPLICATION_ID")),
+			GuildID:          strings.TrimSpace(os.Getenv("BOT_DISCORD_GUILD_ID")),
+			AllowedChannelID: strings.TrimSpace(os.Getenv("BOT_DISCORD_ALLOWED_CHANNEL_ID")),
+		},
 	}
 
 	if intervalStr := strings.TrimSpace(os.Getenv("BOT_POLL_INTERVAL")); intervalStr != "" {
@@ -176,6 +192,9 @@ func parseBotConfig() BotConfig {
 
 	if cfg.TelegramToken == "" || cfg.AllowedChatID == "" {
 		cfg.Enabled = false
+	}
+	if cfg.Discord.BotToken == "" || cfg.Discord.ApplicationID == "" || cfg.Discord.AllowedChannelID == "" {
+		cfg.Discord.Enabled = false
 	}
 
 	return cfg

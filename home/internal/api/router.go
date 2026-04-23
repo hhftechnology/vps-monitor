@@ -283,6 +283,7 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 		r.Put("/auth", ar.UpdateAuth)
 		r.Put("/bot", ar.UpdateBot)
 		r.Post("/test/bot", ar.TestBot)
+		r.Post("/test/discord-bot", ar.TestDiscordBot)
 		r.Post("/test/docker-host", ar.TestDockerHost)
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
 		if ar.scanHandlers != nil {

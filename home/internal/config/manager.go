@@ -40,10 +40,19 @@ type FileNotificationConfig struct {
 }
 
 type FileBotConfig struct {
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Mode          string `json:"mode,omitempty"`
-	TelegramToken string `json:"telegramToken,omitempty"`
-	AllowedChatID string `json:"allowedChatId,omitempty"`
+	Enabled       *bool                 `json:"enabled,omitempty"`
+	Mode          string                `json:"mode,omitempty"`
+	TelegramToken string                `json:"telegramToken,omitempty"`
+	AllowedChatID string                `json:"allowedChatId,omitempty"`
+	Discord       *FileDiscordBotConfig `json:"discord,omitempty"`
+}
+
+type FileDiscordBotConfig struct {
+	Enabled          *bool  `json:"enabled,omitempty"`
+	BotToken         string `json:"botToken,omitempty"`
+	ApplicationID    string `json:"applicationId,omitempty"`
+	GuildID          string `json:"guildId,omitempty"`
+	AllowedChannelID string `json:"allowedChannelId,omitempty"`
 }
 
 // FileConfig represents the JSON config file structure.
@@ -117,7 +126,13 @@ func NewManager() *Manager {
 		BotSet: os.Getenv("BOT_TELEGRAM_TOKEN") != "" ||
 			os.Getenv("BOT_ALLOWED_CHAT_ID") != "" ||
 			os.Getenv("BOT_ENABLED") != "" ||
-			os.Getenv("BOT_POLL_INTERVAL") != "",
+			os.Getenv("BOT_MODE") != "" ||
+			os.Getenv("BOT_POLL_INTERVAL") != "" ||
+			os.Getenv("BOT_DISCORD_ENABLED") != "" ||
+			os.Getenv("BOT_DISCORD_TOKEN") != "" ||
+			os.Getenv("BOT_DISCORD_APPLICATION_ID") != "" ||
+			os.Getenv("BOT_DISCORD_GUILD_ID") != "" ||
+			os.Getenv("BOT_DISCORD_ALLOWED_CHANNEL_ID") != "",
 		ScannerSet: os.Getenv("SCANNER_GRYPE_IMAGE") != "" ||
 			os.Getenv("SCANNER_TRIVY_IMAGE") != "" ||
 			os.Getenv("SCANNER_SYFT_IMAGE") != "" ||
@@ -522,9 +537,29 @@ func (m *Manager) merge() (*Config, ConfigSources) {
 		if fc.AllowedChatID != "" {
 			cfg.Bot.AllowedChatID = fc.AllowedChatID
 		}
+		if fc.Discord != nil {
+			if fc.Discord.Enabled != nil {
+				cfg.Bot.Discord.Enabled = *fc.Discord.Enabled
+			}
+			if fc.Discord.BotToken != "" {
+				cfg.Bot.Discord.BotToken = fc.Discord.BotToken
+			}
+			if fc.Discord.ApplicationID != "" {
+				cfg.Bot.Discord.ApplicationID = fc.Discord.ApplicationID
+			}
+			if fc.Discord.GuildID != "" {
+				cfg.Bot.Discord.GuildID = fc.Discord.GuildID
+			}
+			if fc.Discord.AllowedChannelID != "" {
+				cfg.Bot.Discord.AllowedChannelID = fc.Discord.AllowedChannelID
+			}
+		}
 	}
 	if cfg.Bot.TelegramToken == "" || cfg.Bot.AllowedChatID == "" {
 		cfg.Bot.Enabled = false
+	}
+	if cfg.Bot.Discord.BotToken == "" || cfg.Bot.Discord.ApplicationID == "" || cfg.Bot.Discord.AllowedChannelID == "" {
+		cfg.Bot.Discord.Enabled = false
 	}
 	if m.envSnapshot.BotSet && m.fileConfig.Bot != nil {
 		sources.Bot = SourceMixed
