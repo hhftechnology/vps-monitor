@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestErrEnvironmentConfiguredSentinel ensures the sentinel error is defined and
@@ -759,6 +760,35 @@ func TestDiscordBotEnvConfigParsesAndDisablesWhenIncomplete(t *testing.T) {
 	}
 	if cfg.Bot.Discord.BotToken != "discord-token" || cfg.Bot.Discord.ApplicationID != "app-1" || cfg.Bot.Discord.AllowedChannelID != "channel-1" {
 		t.Fatalf("unexpected discord bot config: %+v", cfg.Bot.Discord)
+	}
+}
+
+func TestAlertFilterNormalizesSupportedValues(t *testing.T) {
+	t.Setenv("ALERTS_FILTER", " CRITICAL ")
+	cfg := NewConfig()
+	if cfg.Alerts.AlertsFilter != "critical" {
+		t.Fatalf("expected critical filter, got %q", cfg.Alerts.AlertsFilter)
+	}
+
+	t.Setenv("ALERTS_FILTER", "unexpected")
+	cfg = NewConfig()
+	if cfg.Alerts.AlertsFilter != "all" {
+		t.Fatalf("expected invalid filter to default to all, got %q", cfg.Alerts.AlertsFilter)
+	}
+}
+
+func TestStatsSampleIntervalFallsBackToAlertsInterval(t *testing.T) {
+	t.Setenv("ALERTS_CHECK_INTERVAL", "45s")
+	t.Setenv("STATS_SAMPLE_INTERVAL", "")
+	cfg := NewConfig()
+	if cfg.Stats.SampleInterval != 45*time.Second {
+		t.Fatalf("expected stats interval to fall back to alerts interval, got %s", cfg.Stats.SampleInterval)
+	}
+
+	t.Setenv("STATS_SAMPLE_INTERVAL", "2m")
+	cfg = NewConfig()
+	if cfg.Stats.SampleInterval != 2*time.Minute {
+		t.Fatalf("expected stats interval override, got %s", cfg.Stats.SampleInterval)
 	}
 }
 

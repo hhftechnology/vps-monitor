@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,6 +19,13 @@ import (
 )
 
 const telegramAPIBase = "https://api.telegram.org"
+
+var (
+	ErrRelayDisabled       = errors.New("bot relay mode is disabled")
+	ErrRelayNotConfigured  = errors.New("telegram token and allowed chat id are required")
+	ErrRelayChatNotAllowed = errors.New("chat id is not allowed")
+	ErrTelegramSendFailed  = errors.New("telegram send failed")
+)
 
 type Service struct {
 	mu               sync.Mutex
@@ -126,27 +134,28 @@ func (s *Service) RelayCommand(ctx context.Context, chatID, text string) (string
 	s.mu.Unlock()
 
 	if cfg.Mode != config.BotModeJWTRelay {
-		return "", fmt.Errorf("bot relay mode is disabled")
+		return "", ErrRelayDisabled
 	}
 	if !isConfigured(cfg) {
-		return "", fmt.Errorf("telegram token and allowed chat id are required")
+		return "", ErrRelayNotConfigured
 	}
 
+	text = strings.TrimSpace(text)
 	targetChatID := strings.TrimSpace(chatID)
 	if targetChatID == "" {
 		targetChatID = cfg.AllowedChatID
 	}
 	if cfg.AllowedChatID != "" && targetChatID != cfg.AllowedChatID {
-		return "", fmt.Errorf("chat id is not allowed")
+		return "", ErrRelayChatNotAllowed
 	}
 
-	reply := s.commands.handle(strings.TrimSpace(text))
+	reply := s.commands.handle(text)
 	if reply == "" {
 		return "", nil
 	}
 
 	if err := s.sendMessage(ctx, cfg.TelegramToken, targetChatID, reply); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrTelegramSendFailed, err)
 	}
 
 	return reply, nil
@@ -163,25 +172,38 @@ func (s *Service) SendTestMessage(ctx context.Context, token, chatID string) err
 func (s *Service) pollLoop(cfg config.BotConfig, stopCh <-chan struct{}, doneCh chan<- struct{}) {
 	defer close(doneCh)
 
-	for {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
 		select {
 		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
 			return
 		default:
 		}
 
-		if err := s.pollOnce(cfg); err != nil {
+		if err := s.pollOnce(ctx, cfg); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
 			log.Printf("telegram bot poll failed: %v", err)
 			select {
 			case <-time.After(5 * time.Second):
-			case <-stopCh:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}
 }
 
-func (s *Service) pollOnce(cfg config.BotConfig) error {
+func (s *Service) pollOnce(ctx context.Context, cfg config.BotConfig) error {
 	params := url.Values{}
 	params.Set("timeout", strconv.Itoa(int(cfg.PollInterval.Seconds())))
 
@@ -192,7 +214,7 @@ func (s *Service) pollOnce(cfg config.BotConfig) error {
 		params.Set("offset", strconv.FormatInt(offset, 10))
 	}
 
-	req, err := http.NewRequest(http.MethodGet, s.apiURL(cfg.TelegramToken, "getUpdates", params), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.apiURL(cfg.TelegramToken, "getUpdates", params), nil)
 	if err != nil {
 		return err
 	}
@@ -232,7 +254,7 @@ func (s *Service) pollOnce(cfg config.BotConfig) error {
 			continue
 		}
 
-		if err := s.sendMessage(context.Background(), cfg.TelegramToken, strconv.FormatInt(update.Message.Chat.ID, 10), reply); err != nil {
+		if err := s.sendMessage(ctx, cfg.TelegramToken, strconv.FormatInt(update.Message.Chat.ID, 10), reply); err != nil {
 			log.Printf("telegram bot send failed: %v", err)
 		}
 	}

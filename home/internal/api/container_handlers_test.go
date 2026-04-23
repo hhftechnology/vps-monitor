@@ -72,6 +72,25 @@ func TestGetContainerHistoricalStatsReturnsPersistedDataWithoutAlerts(t *testing
 	}
 }
 
+func TestGetContainerHistoricalStatsValidatesHostBeforeStatsDB(t *testing.T) {
+	router := &APIRouter{
+		registry: services.NewRegistry(nil, nil, nil, &config.Config{}, nil),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/containers/container-1/stats/history", nil)
+	req = withURLParam(req, "id", "container-1")
+	rec := httptest.NewRecorder()
+
+	router.GetContainerHistoricalStats(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "host parameter is required\n" {
+		t.Fatalf("unexpected body: %q", rec.Body.String())
+	}
+}
+
 func TestEnrichContainersWithHistoricalStatsUsesDatabase(t *testing.T) {
 	db := newTestAPIScanDB(t)
 	now := time.Now().UTC()

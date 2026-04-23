@@ -454,6 +454,7 @@ func (m *Manager) merge() (*Config, ConfigSources) {
 	// Preserve vps-monitor specific fields from env config
 	cfg.Hostname = m.envConfig.Hostname
 	cfg.Alerts = m.envConfig.Alerts
+	cfg.Stats = m.envConfig.Stats
 
 	// Docker hosts: env hosts + file hosts combined. Env hosts win on name collision.
 	envDockerNames := make(map[string]bool)

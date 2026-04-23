@@ -138,7 +138,7 @@ export function ContainersToolbar({
 				placeholder="Search containers..."
 				className="sm:max-w-sm"
 			/>
-			<div className="flex items-center gap-2">
+			<div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
 						<Button variant="outline" size="sm" className="h-9">
@@ -314,6 +314,7 @@ export function ContainersToolbar({
 					size="sm"
 					onClick={onRefresh}
 					className="h-9 shrink-0"
+					aria-label="Refresh"
 				>
 					<RefreshCcwIcon
 						className={`size-4 ${isFetching ? "animate-spin" : ""}`}
@@ -339,6 +340,7 @@ export function ContainersToolbar({
 								size="sm"
 								onClick={handleLogout}
 								className="h-9 shrink-0"
+								aria-label="Logout"
 							>
 								<LogOutIcon className="size-4" />
 							</Button>

@@ -9,7 +9,14 @@ import {
 	SquareIcon,
 	TerminalIcon,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useMemo, useState } from "react";
+import {
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,8 +77,11 @@ export function ContainerDetailsSheet({
 	const [activeTab, setActiveTab] = useState("stats");
 	const [containerId, setContainerId] = useState(container?.id ?? "");
 
-	// Update containerId when container changes
-	const effectiveContainerId = container?.id ?? containerId;
+	useEffect(() => {
+		setContainerId(container?.id ?? "");
+	}, [container?.id]);
+
+	const effectiveContainerId = containerId || container?.id || "";
 
 	const {
 		stats,
@@ -145,12 +155,6 @@ export function ContainerDetailsSheet({
 		];
 	}, [stats]);
 
-	if (!container) return null;
-
-	const containerName =
-		container.names?.[0]?.replace(/^\//, "") || container.id.slice(0, 12);
-	const isRunning = container.state.toLowerCase() === "running";
-	const historyStats = container.historical_stats;
 	const chartHistory = useMemo(() => {
 		const persistedSamples = persistedHistory?.samples ?? [];
 		if (persistedSamples.length === 0) {
@@ -169,6 +173,13 @@ export function ContainerDetailsSheet({
 			.sort((a, b) => a.timestamp - b.timestamp)
 			.slice(-60);
 	}, [history, persistedHistory?.samples]);
+
+	if (!container) return null;
+
+	const containerName =
+		container.names?.[0]?.replace(/^\//, "") || container.id.slice(0, 12);
+	const isRunning = container.state.toLowerCase() === "running";
+	const historyStats = container.historical_stats;
 
 	return (
 		<Sheet open={isOpen} onOpenChange={onOpenChange}>

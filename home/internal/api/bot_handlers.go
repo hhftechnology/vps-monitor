@@ -2,8 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"strings"
 
+	"github.com/hhftechnology/vps-monitor/internal/bot"
 	"github.com/hhftechnology/vps-monitor/internal/config"
 )
 
@@ -31,6 +35,7 @@ func (ar *APIRouter) RelayBotCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Text = strings.TrimSpace(req.Text)
 	if req.Text == "" {
 		http.Error(w, "text is required", http.StatusBadRequest)
 		return
@@ -38,7 +43,9 @@ func (ar *APIRouter) RelayBotCommand(w http.ResponseWriter, r *http.Request) {
 
 	reply, err := ar.botService.RelayCommand(r.Context(), req.ChatID, req.Text)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		status, message := relayBotCommandErrorResponse(err)
+		log.Printf("bot relay command failed: %v", err)
+		http.Error(w, message, status)
 		return
 	}
 
@@ -46,4 +53,19 @@ func (ar *APIRouter) RelayBotCommand(w http.ResponseWriter, r *http.Request) {
 		"message": "Command relayed",
 		"reply":   reply,
 	})
+}
+
+func relayBotCommandErrorResponse(err error) (int, string) {
+	switch {
+	case errors.Is(err, bot.ErrRelayDisabled):
+		return http.StatusConflict, "bot relay mode is disabled"
+	case errors.Is(err, bot.ErrRelayNotConfigured):
+		return http.StatusConflict, "bot relay is not configured"
+	case errors.Is(err, bot.ErrRelayChatNotAllowed):
+		return http.StatusForbidden, "chat id is not allowed"
+	case errors.Is(err, bot.ErrTelegramSendFailed):
+		return http.StatusBadGateway, "failed to send Telegram message"
+	default:
+		return http.StatusBadRequest, "invalid bot relay command"
+	}
 }

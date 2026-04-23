@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContainerDetailsSheet } from "./container-details-sheet";
@@ -13,6 +13,32 @@ vi.mock("../hooks/use-container-stats", () => ({
 
 vi.mock("../hooks/use-container-history", () => ({
   useContainerHistory: (...args: unknown[]) => mockUseContainerHistory(...args),
+}));
+
+vi.mock("@/components/ui/tabs", () => ({
+  Tabs: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  TabsContent: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  TabsList: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  TabsTrigger: ({
+    children,
+    value: _value,
+    ...props
+  }: {
+    children?: ReactNode;
+    value: string;
+  }) => <button type="button" {...props}>{children}</button>,
+}));
+
+vi.mock("./environment-variables", () => ({
+  EnvironmentVariables: ({
+    onContainerIdChange,
+  }: {
+    onContainerIdChange: (containerId: string) => void;
+  }) => (
+    <button type="button" onClick={() => onContainerIdChange("container-2")}>
+      Update container id
+    </button>
+  ),
 }));
 
 vi.mock("recharts", async () => {
@@ -129,5 +155,43 @@ describe("ContainerDetailsSheet", () => {
     expect(screen.getByText("Memory Usage (%)")).toBeInTheDocument();
     expect(screen.getByText("Network I/O")).toBeInTheDocument();
     expect(screen.getByText("Block I/O")).toBeInTheDocument();
+  });
+
+  it("keeps hooks stable with a null container and respects child container id updates", async () => {
+    const { rerender } = render(
+      <ContainerDetailsSheet
+        container={null}
+        host="local"
+        isOpen
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    rerender(
+      <ContainerDetailsSheet
+        container={{
+          id: "container-1",
+          names: ["/api"],
+          image: "ghcr.io/example/api:latest",
+          image_id: "sha256:123",
+          command: "node server.js",
+          created: 1_700_000_000,
+          state: "running",
+          status: "Up 2 hours",
+          host: "local",
+        }}
+        host="local"
+        isOpen
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /update container id/i }),
+    );
+
+    expect(mockUseContainerStats).toHaveBeenLastCalledWith(
+      expect.objectContaining({ containerId: "container-2" }),
+    );
   });
 });

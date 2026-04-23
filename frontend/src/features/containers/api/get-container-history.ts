@@ -22,5 +22,9 @@ export async function getContainerHistory(
 		throw new Error(message || `Request failed with status ${response.status}`);
 	}
 
-	return response.json() as Promise<ContainerHistoryStats>;
+	const data = (await response.json()) as ContainerHistoryStats;
+	return {
+		...data,
+		samples: data.samples ?? [],
+	};
 }

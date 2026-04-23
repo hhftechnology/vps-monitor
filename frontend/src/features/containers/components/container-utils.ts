@@ -124,11 +124,16 @@ export function getHistoricalValue(
 		return null;
 	}
 
-	if (interval === "1h") {
-		return metric === "cpu" ? stats.cpu_1h : stats.memory_1h;
-	}
+	const value =
+		interval === "1h"
+			? metric === "cpu"
+				? stats.cpu_1h
+				: stats.memory_1h
+			: metric === "cpu"
+				? stats.cpu_12h
+				: stats.memory_12h;
 
-	return metric === "cpu" ? stats.cpu_12h : stats.memory_12h;
+	return value ?? null;
 }
 
 export function getInitialStateCounts(): StateCounts {

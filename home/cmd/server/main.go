@@ -83,6 +83,7 @@ func main() {
 	log.Printf("Scan database opened at %s", dbPath)
 
 	// Alert monitor / stats collection
+	// alertMonitor starts nil and is injected after creation when alerts are enabled.
 	var alertMonitor *alerts.Monitor
 	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
 
@@ -99,7 +100,7 @@ func main() {
 			log.Println("   Webhook notifications are ENABLED")
 		}
 	} else {
-		statsCollector = containerstats.NewCollector(registry, scanDB, cfg.Alerts.CheckInterval, containerStatsRetention)
+		statsCollector = containerstats.NewCollector(registry, scanDB, cfg.Stats.SampleInterval, containerStatsRetention)
 		statsCollector.Start()
 		defer statsCollector.Stop()
 		log.Println("Alert monitoring is DISABLED")

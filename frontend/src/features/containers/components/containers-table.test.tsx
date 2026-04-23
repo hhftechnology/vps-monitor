@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContainersTable } from "./containers-table";
@@ -86,5 +86,46 @@ describe("ContainersTable", () => {
     expect(screen.getByRole("button", { name: /project-alpha/i }).textContent).toContain(
       "project-alpha · 2 containers",
     );
+  });
+
+  it("renders the image copy control as an accessible button", () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <ContainersTable
+        error={null}
+        expandedGroups={[]}
+        filteredContainers={[baseContainer]}
+        groupBy="none"
+        groupedItems={null}
+        isError={false}
+        isLoading={false}
+        isReadOnly={false}
+        onDelete={vi.fn()}
+        onRetry={vi.fn()}
+        onRestart={vi.fn()}
+        onSelectAll={vi.fn()}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onToggleGroup={vi.fn()}
+        onToggleSelect={vi.fn()}
+        onViewLogs={vi.fn()}
+        onViewStats={vi.fn()}
+        pageItems={[baseContainer]}
+        pendingAction={null}
+        selectedIds={[]}
+        statsInterval="1h"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `Copy ${baseContainer.image}` }),
+    );
+
+    expect(writeText).toHaveBeenCalledWith(baseContainer.image);
   });
 });

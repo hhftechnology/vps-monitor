@@ -114,7 +114,8 @@ export function ContainersDashboard() {
 	} | null>(null);
 	const [confirmAction, setConfirmAction] = useState<{
 		type: Extract<ContainerActionType, "stop" | "remove">;
-		container: ContainerInfo;
+		containers: ContainerInfo[];
+		clearSelectionOnConfirm?: boolean;
 	} | null>(null);
 
 	// Helper function to check if a container matches filters
@@ -298,8 +299,13 @@ export function ContainersDashboard() {
 
 	const handleConfirmAction = async () => {
 		if (!confirmAction) return;
-		const { type, container } = confirmAction;
-		await executeAction(type, container);
+		const { type, containers, clearSelectionOnConfirm } = confirmAction;
+		for (const container of containers) {
+			await executeAction(type, container);
+		}
+		if (clearSelectionOnConfirm) {
+			setSelectedContainerIds([]);
+		}
 		setConfirmAction(null);
 	};
 
@@ -400,7 +406,7 @@ export function ContainersDashboard() {
 	};
 
 	const handleStopContainer = (container: ContainerInfo) => {
-		setConfirmAction({ type: "stop", container });
+		setConfirmAction({ type: "stop", containers: [container] });
 	};
 
 	const handleRestartContainer = (container: ContainerInfo) => {
@@ -408,7 +414,7 @@ export function ContainersDashboard() {
 	};
 
 	const handleDeleteContainer = (container: ContainerInfo) => {
-		setConfirmAction({ type: "remove", container });
+		setConfirmAction({ type: "remove", containers: [container] });
 	};
 
 	const handleToggleSelect = (id: string) => {
@@ -441,6 +447,18 @@ export function ContainersDashboard() {
 			selectedContainerIds.includes(container.id),
 		);
 
+		if (
+			(action === "stop" || action === "remove") &&
+			selectedContainers.length > 0
+		) {
+			setConfirmAction({
+				type: action,
+				containers: selectedContainers,
+				clearSelectionOnConfirm: true,
+			});
+			return;
+		}
+
 		for (const container of selectedContainers) {
 			await executeAction(action, container);
 		}
@@ -461,27 +479,39 @@ export function ContainersDashboard() {
 
 	const confirmActionTitle =
 		confirmAction?.type === "stop"
-			? "Stop container?"
+			? confirmAction.containers.length === 1
+				? "Stop container?"
+				: "Stop containers?"
 			: confirmAction?.type === "remove"
-				? "Remove container?"
+				? confirmAction.containers.length === 1
+					? "Remove container?"
+					: "Remove containers?"
 				: "";
 
 	const confirmActionDescription =
 		confirmAction?.type === "stop"
-			? "Stopping a container will terminate its running processes."
+			? confirmAction.containers.length === 1
+				? "Stopping a container will terminate its running processes."
+				: `Stopping ${confirmAction.containers.length} containers will terminate their running processes.`
 			: confirmAction?.type === "remove"
-				? "Removing a container will permanently delete it and its resources. This action cannot be undone."
+				? confirmAction.containers.length === 1
+					? "Removing a container will permanently delete it and its resources. This action cannot be undone."
+					: `Removing ${confirmAction.containers.length} containers will permanently delete them and their resources. This action cannot be undone.`
 				: "";
 
 	const confirmActionButtonLabel = confirmAction
 		? confirmAction.type === "stop"
-			? "Stop Container"
-			: "Remove Container"
+			? confirmAction.containers.length === 1
+				? "Stop Container"
+				: "Stop Containers"
+			: confirmAction.containers.length === 1
+				? "Remove Container"
+				: "Remove Containers"
 		: "Confirm";
 
 	const isConfirmActionPending =
 		!!confirmAction &&
-		pendingAction?.id === confirmAction.container.id &&
+		confirmAction.containers.some((container) => container.id === pendingAction?.id) &&
 		pendingAction?.type === confirmAction.type;
 
 	return (
@@ -630,7 +660,7 @@ export function ContainersDashboard() {
 							{confirmActionDescription}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
-					{confirmAction && (
+					{confirmAction?.containers.length === 1 && (
 						<div className="space-y-2">
 							<div className="text-sm font-medium text-muted-foreground">
 								Container Details
@@ -639,19 +669,19 @@ export function ContainersDashboard() {
 								<div className="flex items-start justify-between gap-4">
 									<span className="text-xs text-muted-foreground">Name</span>
 									<span className="text-sm font-medium text-right">
-										{formatContainerName(confirmAction.container.names)}
+										{formatContainerName(confirmAction.containers[0].names)}
 									</span>
 								</div>
 								<div className="flex items-start justify-between gap-4">
 									<span className="text-xs text-muted-foreground">Image</span>
 									<span className="text-sm font-mono text-right break-all">
-										{confirmAction.container.image}
+										{confirmAction.containers[0].image}
 									</span>
 								</div>
 								<div className="flex items-start justify-between gap-4">
 									<span className="text-xs text-muted-foreground">ID</span>
 									<span className="text-sm font-mono text-right break-all">
-										{confirmAction.container.id.slice(0, 12)}
+										{confirmAction.containers[0].id.slice(0, 12)}
 									</span>
 								</div>
 							</div>

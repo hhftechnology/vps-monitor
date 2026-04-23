@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { groupByCompose } from "./container-utils";
+import { getHistoricalValue, groupByCompose } from "./container-utils";
 
 describe("groupByCompose", () => {
 	it("sorts compose groups by newest container when descending", () => {
@@ -38,5 +38,29 @@ describe("groupByCompose", () => {
 			"project-new",
 			"project-old",
 		]);
+	});
+});
+
+describe("getHistoricalValue", () => {
+	it("returns null when the selected historical field is missing", () => {
+		const container = {
+			id: "1",
+			names: ["/api"],
+			image: "img",
+			image_id: "sha",
+			command: "run",
+			created: 100,
+			state: "running",
+			status: "up",
+			host: "host-a",
+			historical_stats: {
+				cpu_1h: 12,
+				memory_1h: undefined,
+				cpu_12h: 20,
+				memory_12h: 30,
+			},
+		} as any;
+
+		expect(getHistoricalValue(container, "1h", "memory")).toBeNull();
 	});
 });

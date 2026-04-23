@@ -277,15 +277,20 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 		r.Use(auth.DynamicMiddleware(ar.registry.Auth))
 
 		r.Get("/", ar.GetSettings)
-		r.Put("/docker-hosts", ar.UpdateDockerHosts)
-		r.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
 		r.Put("/read-only", ar.UpdateReadOnly)
-		r.Put("/auth", ar.UpdateAuth)
-		r.Put("/bot", ar.UpdateBot)
 		r.Post("/test/bot", ar.TestBot)
 		r.Post("/test/discord-bot", ar.TestDiscordBot)
 		r.Post("/test/docker-host", ar.TestDockerHost)
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
+		r.Group(func(mutating chi.Router) {
+			mutating.Use(middleware.ReadOnly(func() bool {
+				return ar.registry.Config().ReadOnly
+			}))
+			mutating.Put("/docker-hosts", ar.UpdateDockerHosts)
+			mutating.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
+			mutating.Put("/auth", ar.UpdateAuth)
+			mutating.Put("/bot", ar.UpdateBot)
+		})
 		if ar.scanHandlers != nil {
 			r.Get("/scan", ar.scanHandlers.GetScannerConfig)
 			r.Group(func(mutating chi.Router) {

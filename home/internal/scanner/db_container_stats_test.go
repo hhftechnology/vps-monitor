@@ -102,6 +102,31 @@ func TestGetRecentContainerStatsReturnsAscendingSeries(t *testing.T) {
 	}
 }
 
+func TestGetRecentContainerStatsClampsLimit(t *testing.T) {
+	db := newTestScanDB(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+
+	for i := 0; i < maxContainerStatsLimit+5; i++ {
+		if err := db.InsertContainerStat(models.ContainerStats{
+			ContainerID: "container-1",
+			Host:        "host-a",
+			CPUPercent:  float64(i),
+			Timestamp:   now.Add(time.Duration(i) * time.Second).Unix(),
+		}); err != nil {
+			t.Fatalf("InsertContainerStat() error = %v", err)
+		}
+	}
+
+	series, err := db.GetRecentContainerStats("host-a", "container-1", now.Add(-time.Hour), maxContainerStatsLimit+1000)
+	if err != nil {
+		t.Fatalf("GetRecentContainerStats() error = %v", err)
+	}
+
+	if len(series) != maxContainerStatsLimit {
+		t.Fatalf("expected clamped sample count %d, got %d", maxContainerStatsLimit, len(series))
+	}
+}
+
 func TestPruneContainerStatsOlderThanRemovesExpiredRows(t *testing.T) {
 	db := newTestScanDB(t)
 	now := time.Unix(1_700_000_000, 0).UTC()

@@ -38,23 +38,34 @@ func TestHistoryManagerUsesHostScopedKeys(t *testing.T) {
 
 func TestHistoryManagerExcludesExpiredPoints(t *testing.T) {
 	manager := NewHistoryManager()
+	now := time.Now()
 
 	manager.RecordStats("host-a", "container-1", models.ContainerStats{
 		CPUPercent:    90,
 		MemoryPercent: 90,
-		Timestamp:     time.Now().Add(-13 * time.Hour).Unix(),
+		Timestamp:     now.Add(-13 * time.Hour).Unix(),
+	})
+	manager.RecordStats("host-a", "container-1", models.ContainerStats{
+		CPUPercent:    80,
+		MemoryPercent: 80,
+		Timestamp:     now.Add(-12 * time.Hour).Add(-1 * time.Second).Unix(),
+	})
+	manager.RecordStats("host-a", "container-1", models.ContainerStats{
+		CPUPercent:    10,
+		MemoryPercent: 20,
+		Timestamp:     now.Add(-12 * time.Hour).Add(1 * time.Second).Unix(),
 	})
 	manager.RecordStats("host-a", "container-1", models.ContainerStats{
 		CPUPercent:    30,
 		MemoryPercent: 40,
-		Timestamp:     time.Now().Unix(),
+		Timestamp:     now.Unix(),
 	})
 
 	cpu, mem, ok := manager.Get12hAverages("host-a", "container-1")
 	if !ok {
 		t.Fatal("expected in-window data")
 	}
-	if cpu != 30 || mem != 40 {
-		t.Fatalf("expected only recent sample, got cpu=%v mem=%v", cpu, mem)
+	if cpu != 20 || mem != 30 {
+		t.Fatalf("expected only in-window samples, got cpu=%v mem=%v", cpu, mem)
 	}
 }

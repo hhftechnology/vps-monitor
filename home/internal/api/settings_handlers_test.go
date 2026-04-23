@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hhftechnology/vps-monitor/internal/auth"
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/services"
@@ -236,6 +237,7 @@ func TestGetSettingsMasksDiscordToken(t *testing.T) {
 	manager := newTestSettingsManager(t)
 	enabled := true
 	if err := manager.UpdateBotConfig(&config.FileBotConfig{
+		TelegramToken: "telegram-token",
 		Discord: &config.FileDiscordBotConfig{
 			Enabled:          &enabled,
 			BotToken:         "discord-token",
@@ -260,7 +262,9 @@ func TestGetSettingsMasksDiscordToken(t *testing.T) {
 
 	var body struct {
 		Bot struct {
-			Discord struct {
+			TelegramToken           string `json:"telegramToken"`
+			TelegramTokenConfigured bool   `json:"telegramTokenConfigured"`
+			Discord                 struct {
 				BotToken string `json:"botToken"`
 			} `json:"discord"`
 		} `json:"bot"`
@@ -268,8 +272,78 @@ func TestGetSettingsMasksDiscordToken(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode settings response: %v", err)
 	}
+	if body.Bot.TelegramToken != "" {
+		t.Fatalf("expected telegram token to be omitted, got %q", body.Bot.TelegramToken)
+	}
+	if !body.Bot.TelegramTokenConfigured {
+		t.Fatal("expected telegramTokenConfigured=true")
+	}
 	if body.Bot.Discord.BotToken != secretMask {
 		t.Fatalf("expected masked discord token, got %q", body.Bot.Discord.BotToken)
+	}
+}
+
+func TestUpdateBotRejectsMaskedTelegramTokenWithoutStoredToken(t *testing.T) {
+	manager := newTestSettingsManager(t)
+	router := &APIRouter{
+		manager:  manager,
+		registry: services.NewRegistry(nil, nil, nil, manager.Config(), nil),
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/bot", strings.NewReader(`{
+		"enabled": false,
+		"mode": "polling",
+		"telegramToken": "••••••••",
+		"allowedChatId": ""
+	}`))
+	rec := httptest.NewRecorder()
+	router.UpdateBot(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestTestBotRejectsMaskedTelegramTokenWithoutStoredToken(t *testing.T) {
+	manager := newTestSettingsManager(t)
+	router := &APIRouter{
+		manager:  manager,
+		registry: services.NewRegistry(nil, nil, nil, manager.Config(), nil),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/test/bot", strings.NewReader(`{
+		"telegramToken": "••••••••",
+		"allowedChatId": "123"
+	}`))
+	rec := httptest.NewRecorder()
+	router.TestBot(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestSettingsMutationRoutesRespectReadOnlyMode(t *testing.T) {
+	manager := newTestSettingsManager(t)
+	registry := services.NewRegistry(nil, nil, auth.NewDisabledService(), &config.Config{
+		ReadOnly: true,
+		Bot:      config.BotConfig{Mode: config.BotModePolling},
+	}, nil)
+	router := NewRouter(registry, manager, nil)
+
+	for _, route := range []string{
+		"/api/v1/settings/docker-hosts",
+		"/api/v1/settings/coolify-hosts",
+		"/api/v1/settings/auth",
+		"/api/v1/settings/bot",
+	} {
+		req := httptest.NewRequest(http.MethodPut, route, strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("expected %d for %s, got %d: %s", http.StatusForbidden, route, rec.Code, rec.Body.String())
+		}
 	}
 }
 

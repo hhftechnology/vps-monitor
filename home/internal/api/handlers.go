@@ -102,8 +102,8 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
-	defer releaseDocker()
 	if dockerClient == nil {
+		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -265,6 +265,7 @@ func (ar *APIRouter) StopContainer(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go ar.runAsyncContainerAction(host, id, "stop", func(ctx context.Context) error {
+		defer releaseDocker()
 		return dockerClient.StopContainer(ctx, host, id)
 	})
 }
@@ -279,8 +280,8 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
-	defer releaseDocker()
 	if dockerClient == nil {
+		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -291,6 +292,7 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go ar.runAsyncContainerAction(host, id, "restart", func(ctx context.Context) error {
+		defer releaseDocker()
 		return dockerClient.RestartContainer(ctx, host, id)
 	})
 }
@@ -305,8 +307,8 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
-	defer releaseDocker()
 	if dockerClient == nil {
+		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -317,6 +319,7 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go ar.runAsyncContainerAction(host, id, "remove", func(ctx context.Context) error {
+		defer releaseDocker()
 		return dockerClient.RemoveContainer(ctx, host, id)
 	})
 }
@@ -325,13 +328,13 @@ func (ar *APIRouter) GetContainerHistoricalStats(w http.ResponseWriter, r *http.
 	id := chi.URLParam(r, "id")
 	host := r.URL.Query().Get("host")
 
-	if ar.statsDB == nil {
-		http.Error(w, "stats history not available", http.StatusServiceUnavailable)
+	if host == "" {
+		http.Error(w, "host parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	if host == "" {
-		http.Error(w, "host parameter is required", http.StatusBadRequest)
+	if ar.statsDB == nil {
+		http.Error(w, "stats history not available", http.StatusServiceUnavailable)
 		return
 	}
 

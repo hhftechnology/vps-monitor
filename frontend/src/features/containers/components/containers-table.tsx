@@ -134,15 +134,17 @@ export function ContainersTable({
 					<TooltipProvider>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<span
+								<button
+									type="button"
 									className="block max-w-[260px] cursor-pointer truncate"
 									onClick={() => {
 										navigator.clipboard?.writeText(container.image);
 									}}
 									title="Click to copy image name"
+									aria-label={`Copy ${container.image}`}
 								>
 									{container.image}
-								</span>
+								</button>
 							</TooltipTrigger>
 							<TooltipContent className="max-w-md break-all">
 								{container.image}

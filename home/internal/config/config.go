@@ -40,6 +40,10 @@ type AlertConfig struct {
 	AlertsFilter    string
 }
 
+type StatsConfig struct {
+	SampleInterval time.Duration
+}
+
 type BotConfig struct {
 	Enabled       bool
 	Mode          string
@@ -91,6 +95,7 @@ type Config struct {
 	DockerHosts  []DockerHost
 	CoolifyHosts []CoolifyHostConfig
 	Alerts       AlertConfig
+	Stats        StatsConfig
 	Bot          BotConfig
 	Scanner      ScannerConfig
 }
@@ -101,6 +106,7 @@ func NewConfig() *Config {
 	dockerHosts := parseDockerHosts()
 	coolifyHosts := parseCoolifyHostConfigs()
 	alertConfig := parseAlertConfig()
+	statsConfig := parseStatsConfig(alertConfig.CheckInterval)
 	botConfig := parseBotConfig()
 
 	// if we don't have any docker hosts, we should default back to
@@ -128,6 +134,7 @@ func NewConfig() *Config {
 		DockerHosts:  dockerHosts,
 		CoolifyHosts: coolifyHosts,
 		Alerts:       alertConfig,
+		Stats:        statsConfig,
 		Bot:          botConfig,
 		Scanner:      scannerConfig,
 	}
@@ -161,8 +168,27 @@ func parseAlertConfig() AlertConfig {
 		}
 	}
 
-	if filter := strings.TrimSpace(os.Getenv("ALERTS_FILTER")); filter != "" {
-		config.AlertsFilter = filter
+	switch filter := strings.ToLower(strings.TrimSpace(os.Getenv("ALERTS_FILTER"))); filter {
+	case "", "all":
+		config.AlertsFilter = "all"
+	case "critical":
+		config.AlertsFilter = "critical"
+	default:
+		config.AlertsFilter = "all"
+	}
+
+	return config
+}
+
+func parseStatsConfig(alertsCheckInterval time.Duration) StatsConfig {
+	config := StatsConfig{
+		SampleInterval: alertsCheckInterval,
+	}
+
+	if intervalStr := strings.TrimSpace(os.Getenv("STATS_SAMPLE_INTERVAL")); intervalStr != "" {
+		if interval, err := time.ParseDuration(intervalStr); err == nil && interval > 0 {
+			config.SampleInterval = interval
+		}
 	}
 
 	return config

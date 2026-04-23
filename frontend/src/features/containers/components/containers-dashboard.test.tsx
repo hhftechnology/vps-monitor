@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,10 @@ import { ContainersDashboard } from "./containers-dashboard";
 const mockUseContainersQuery = vi.fn();
 const mockUseSystemStats = vi.fn();
 const mockUseContainersDashboardUrlState = vi.fn();
+const mockStartContainer = vi.fn();
+const mockStopContainer = vi.fn();
+const mockRestartContainer = vi.fn();
+const mockRemoveContainer = vi.fn();
 const mockContainersLogsSheet = vi.fn((_props: unknown) => (
 	<div data-testid="logs-sheet" />
 ));
@@ -16,6 +20,13 @@ const mockContainerDetailsSheet = vi.fn((_props: unknown) => (
 
 vi.mock("../hooks/use-containers-query", () => ({
 	useContainersQuery: (...args: unknown[]) => mockUseContainersQuery(...args),
+}));
+
+vi.mock("../api/container-actions", () => ({
+	startContainer: (...args: unknown[]) => mockStartContainer(...args),
+	stopContainer: (...args: unknown[]) => mockStopContainer(...args),
+	restartContainer: (...args: unknown[]) => mockRestartContainer(...args),
+	removeContainer: (...args: unknown[]) => mockRemoveContainer(...args),
 }));
 
 vi.mock("../hooks/use-system-stats", () => ({
@@ -46,14 +57,25 @@ vi.mock("./containers-pagination", () => ({
 vi.mock("./containers-table", () => ({
 	ContainersTable: ({
 		pageItems,
+		onToggleSelect,
 		onViewLogs,
 		onViewStats,
 	}: {
 		pageItems: Array<{ id: string }>;
+		onToggleSelect: (id: string) => void;
 		onViewLogs: (container: { id: string }) => void;
 		onViewStats: (container: { id: string }) => void;
 	}) => (
 		<div>
+			{pageItems.map((item) => (
+				<button
+					key={item.id}
+					type="button"
+					onClick={() => onToggleSelect(item.id)}
+				>
+					Select {item.id}
+				</button>
+			))}
 			<button type="button" onClick={() => onViewLogs(pageItems[0])}>
 				Open logs
 			</button>
@@ -90,6 +112,13 @@ const container = {
 	},
 };
 
+const secondContainer = {
+	...container,
+	id: "container-2",
+	names: ["/worker"],
+	image: "ghcr.io/example/worker:latest",
+};
+
 function renderDashboard() {
 	const queryClient = new QueryClient();
 	return render(
@@ -102,6 +131,10 @@ function renderDashboard() {
 describe("ContainersDashboard", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockStartContainer.mockResolvedValue({ message: "started" });
+		mockStopContainer.mockResolvedValue({ message: "stopped" });
+		mockRestartContainer.mockResolvedValue({ message: "restarted" });
+		mockRemoveContainer.mockResolvedValue({ message: "removed" });
 
 		mockUseContainersQuery.mockReturnValue({
 			data: {
@@ -178,5 +211,33 @@ describe("ContainersDashboard", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Open stats" }));
 		expect(mockContainerDetailsSheet).toHaveBeenCalledTimes(1);
 		expect(screen.getByTestId("details-sheet")).toBeInTheDocument();
+	});
+
+	it("confirms multi-select stop before executing actions", async () => {
+		mockUseContainersQuery.mockReturnValue({
+			data: {
+				containers: [container, secondContainer],
+				readOnly: false,
+				hosts: [{ Name: "local", Host: "unix:///var/run/docker.sock" }],
+				hostErrors: [],
+			},
+			error: null,
+			isError: false,
+			isFetching: false,
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+
+		renderDashboard();
+
+		fireEvent.click(screen.getByRole("button", { name: "Select container-1" }));
+		fireEvent.click(screen.getByRole("button", { name: "Select container-2" }));
+		fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+		expect(mockStopContainer).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByRole("button", { name: "Stop Containers" }));
+
+		await waitFor(() => expect(mockStopContainer).toHaveBeenCalledTimes(2));
 	});
 });

@@ -125,12 +125,7 @@ func (h *commandHandler) buildStatusMessage() string {
 			if historyManager != nil {
 				cpu1h, mem1h, has1h := historyManager.Get1hAverages(hostName, ctr.ID)
 				cpu12h, mem12h, has12h := historyManager.Get12hAverages(hostName, ctr.ID)
-				if has1h || has12h {
-					line += fmt.Sprintf(" | 1h %.1f/%.1f", cpu1h, mem1h)
-					if has12h {
-						line += fmt.Sprintf(" | 12h %.1f/%.1f", cpu12h, mem12h)
-					}
-				}
+				line = appendHistoryAverages(line, cpu1h, mem1h, has1h, cpu12h, mem12h, has12h)
 			}
 
 			lines = append(lines, containerLine{name: name, cpu: stats.CPUPercent, line: line})
@@ -148,6 +143,16 @@ func (h *commandHandler) buildStatusMessage() string {
 		message = append(message, line.line)
 	}
 	return strings.Join(message, "\n")
+}
+
+func appendHistoryAverages(line string, cpu1h, mem1h float64, has1h bool, cpu12h, mem12h float64, has12h bool) string {
+	if has1h {
+		line += fmt.Sprintf(" | 1h %.1f/%.1f", cpu1h, mem1h)
+	}
+	if has12h {
+		line += fmt.Sprintf(" | 12h %.1f/%.1f", cpu12h, mem12h)
+	}
+	return line
 }
 
 func min(a, b int) int {

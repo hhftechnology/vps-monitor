@@ -39,7 +39,7 @@ export interface BotConfig {
 	source: ConfigSource;
 	enabled: boolean;
 	mode: "polling" | "jwt-relay";
-	telegramToken: string;
+	telegramTokenConfigured: boolean;
 	allowedChatId: string;
 	relayPath: string;
 	relayUsesAuth: boolean;

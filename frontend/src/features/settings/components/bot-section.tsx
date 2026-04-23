@@ -29,6 +29,8 @@ import {
 import type { BotConfig } from "../types";
 import { EnvBadge } from "./env-badge";
 
+const MASKED_TOKEN = "••••••••";
+
 interface BotSectionProps {
 	config: BotConfig;
 	disabled?: boolean;
@@ -40,10 +42,11 @@ export function BotSection({
 	disabled = false,
 	authEnabled = false,
 }: BotSectionProps) {
-	const isEnv = config.source === "env";
+	const isEnvBacked = config.source === "env" || config.source === "mixed";
+	const displayTelegramToken = config.telegramTokenConfigured ? MASKED_TOKEN : "";
 	const [enabled, setEnabled] = useState(config.enabled);
 	const [mode, setMode] = useState(config.mode);
-	const [telegramToken, setTelegramToken] = useState(config.telegramToken);
+	const [telegramToken, setTelegramToken] = useState(displayTelegramToken);
 	const [allowedChatId, setAllowedChatId] = useState(config.allowedChatId);
 	const [discordEnabled, setDiscordEnabled] = useState(config.discord.enabled);
 	const [discordBotToken, setDiscordBotToken] = useState(config.discord.botToken);
@@ -62,7 +65,7 @@ export function BotSection({
 	useEffect(() => {
 		setEnabled(config.enabled);
 		setMode(config.mode);
-		setTelegramToken(config.telegramToken);
+		setTelegramToken(config.telegramTokenConfigured ? MASKED_TOKEN : "");
 		setAllowedChatId(config.allowedChatId);
 		setDiscordEnabled(config.discord.enabled);
 		setDiscordBotToken(config.discord.botToken);
@@ -74,7 +77,7 @@ export function BotSection({
 	const hasChanges =
 		enabled !== config.enabled ||
 		mode !== config.mode ||
-		telegramToken !== config.telegramToken ||
+		telegramToken !== displayTelegramToken ||
 		allowedChatId !== config.allowedChatId ||
 		discordEnabled !== config.discord.enabled ||
 		discordBotToken !== config.discord.botToken ||
@@ -84,7 +87,7 @@ export function BotSection({
 
 	const controlsDisabled =
 		disabled ||
-		isEnv ||
+		isEnvBacked ||
 		updateMutation.isPending ||
 		testMutation.isPending ||
 		discordTestMutation.isPending;
@@ -152,7 +155,7 @@ export function BotSection({
 				<CardHeader>
 					<div className="flex items-center gap-3">
 						<CardTitle>Telegram Bot</CardTitle>
-						{isEnv && <EnvBadge />}
+						{isEnvBacked && <EnvBadge />}
 					</div>
 					<CardDescription>
 						Configure the Telegram bot for `/help`, `/status`, and `/critical`
@@ -233,7 +236,7 @@ export function BotSection({
 						</div>
 					)}
 
-					{!isEnv && (
+					{!isEnvBacked && (
 						<div className="flex items-center gap-2">
 							<Button
 								size="sm"
@@ -266,7 +269,7 @@ export function BotSection({
 				<CardHeader>
 					<div className="flex items-center gap-3">
 						<CardTitle>Discord Bot</CardTitle>
-						{isEnv && <EnvBadge />}
+						{isEnvBacked && <EnvBadge />}
 					</div>
 					<CardDescription>
 						Configure Discord slash commands for `/help`, `/status`, and
@@ -338,7 +341,7 @@ export function BotSection({
 						command registration.
 					</div>
 
-					{!isEnv && (
+					{!isEnvBacked && (
 						<div className="flex items-center gap-2">
 							<Button
 								size="sm"

@@ -76,13 +76,13 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	botResp := map[string]any{
-		"source":        sources.Bot,
-		"enabled":       cfg.Bot.Enabled,
-		"mode":          cfg.Bot.Mode,
-		"telegramToken": "",
-		"allowedChatId": cfg.Bot.AllowedChatID,
-		"relayPath":     "/api/v1/bot/relay/command",
-		"relayUsesAuth": true,
+		"source":                  sources.Bot,
+		"enabled":                 cfg.Bot.Enabled,
+		"mode":                    cfg.Bot.Mode,
+		"telegramTokenConfigured": false,
+		"allowedChatId":           cfg.Bot.AllowedChatID,
+		"relayPath":               "/api/v1/bot/relay/command",
+		"relayUsesAuth":           true,
 		"discord": map[string]any{
 			"enabled":          cfg.Bot.Discord.Enabled,
 			"botToken":         "",
@@ -91,10 +91,8 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 			"allowedChannelId": cfg.Bot.Discord.AllowedChannelID,
 		},
 	}
-	if sources.Bot == config.SourceEnv && cfg.Bot.TelegramToken != "" {
-		botResp["telegramToken"] = secretMask
-	} else if fc.Bot != nil && fc.Bot.TelegramToken != "" {
-		botResp["telegramToken"] = secretMask
+	if cfg.Bot.TelegramToken != "" || (fc.Bot != nil && fc.Bot.TelegramToken != "") {
+		botResp["telegramTokenConfigured"] = true
 	}
 	if discordResp, ok := botResp["discord"].(map[string]any); ok {
 		if sources.Bot == config.SourceEnv && cfg.Bot.Discord.BotToken != "" {
@@ -330,9 +328,11 @@ func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 
 	if token == secretMask {
 		fc := ar.manager.FileConfigSnapshot()
-		if fc.Bot != nil {
-			token = fc.Bot.TelegramToken
+		if fc.Bot == nil || fc.Bot.TelegramToken == "" {
+			http.Error(w, "no stored telegram token found; provide the actual token", http.StatusBadRequest)
+			return
 		}
+		token = fc.Bot.TelegramToken
 	}
 
 	if req.Enabled && (token == "" || chatID == "") {
@@ -406,9 +406,11 @@ func (ar *APIRouter) TestBot(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(req.TelegramToken)
 	if token == secretMask {
 		fc := ar.manager.FileConfigSnapshot()
-		if fc.Bot != nil {
-			token = fc.Bot.TelegramToken
+		if fc.Bot == nil || fc.Bot.TelegramToken == "" {
+			http.Error(w, "no stored telegram token found; provide the actual token", http.StatusBadRequest)
+			return
 		}
+		token = fc.Bot.TelegramToken
 	}
 
 	svc := bot.NewService(ar.registry, ar.registry.Config().Bot)

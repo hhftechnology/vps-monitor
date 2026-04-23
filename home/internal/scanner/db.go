@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const maxContainerStatsLimit = 1440
+
 // ScanDB manages the SQLite database for persisting scan results and settings.
 type ScanDB struct {
 	db *sql.DB
@@ -956,6 +958,9 @@ func (s *ScanDB) GetContainerHistoricalAverages(host, containerID string, now ti
 func (s *ScanDB) GetRecentContainerStats(host, containerID string, since time.Time, limit int) ([]models.ContainerStats, error) {
 	if limit <= 0 {
 		return []models.ContainerStats{}, nil
+	}
+	if limit > maxContainerStatsLimit {
+		limit = maxContainerStatsLimit
 	}
 
 	rows, err := s.db.Query(`

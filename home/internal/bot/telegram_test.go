@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -42,7 +43,7 @@ func TestRelayCommandRejectsUnexpectedChat(t *testing.T) {
 	})
 
 	_, err := svc.RelayCommand(context.Background(), "chat-2", "/help")
-	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+	if !errors.Is(err, ErrRelayChatNotAllowed) {
 		t.Fatalf("expected not allowed error, got %v", err)
 	}
 }
@@ -86,6 +87,29 @@ func TestRelayCommandSendsReplyViaTelegram(t *testing.T) {
 	}
 	if gotText == "" || gotText != reply {
 		t.Fatalf("expected reply to be sent, got text=%q reply=%q", gotText, reply)
+	}
+}
+
+func TestPollOnceUsesCancellableContext(t *testing.T) {
+	svc := NewService(nil, config.BotConfig{
+		Enabled:       true,
+		Mode:          config.BotModePolling,
+		TelegramToken: "token",
+		AllowedChatID: "chat-1",
+	})
+	svc.client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := svc.pollOnce(ctx, svc.cfg)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got %v", err)
 	}
 }
 
