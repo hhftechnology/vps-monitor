@@ -196,6 +196,7 @@ export function ContainersTable({
 												className="h-8 w-8"
 												onClick={() => onStart(container)}
 												disabled={busy || isReadOnly}
+												aria-label={`Start container ${formatContainerName(container.names)}`}
 											>
 												{startPending ? (
 													<Spinner className="size-4" />
@@ -220,6 +221,7 @@ export function ContainersTable({
 												className="h-8 w-8"
 												onClick={() => onStop(container)}
 												disabled={busy || isReadOnly}
+												aria-label={`Stop container ${formatContainerName(container.names)}`}
 											>
 												{stopPending ? (
 													<Spinner className="size-4" />
@@ -243,6 +245,7 @@ export function ContainersTable({
 											className="h-8 w-8"
 											onClick={() => onRestart(container)}
 											disabled={busy || isReadOnly}
+											aria-label={`Restart container ${formatContainerName(container.names)}`}
 										>
 											{restartPending ? (
 												<Spinner className="size-4" />
@@ -265,6 +268,7 @@ export function ContainersTable({
 											className="h-8 w-8 text-destructive hover:bg-destructive hover:text-white"
 											onClick={() => onDelete(container)}
 											disabled={busy || isReadOnly}
+											aria-label={`Delete container ${formatContainerName(container.names)}`}
 										>
 											{removePending ? (
 												<Spinner className="size-4" />
@@ -286,6 +290,7 @@ export function ContainersTable({
 										className="h-8 w-8"
 										onClick={() => onViewLogs(container)}
 										disabled={busy}
+										aria-label={`View logs for container ${formatContainerName(container.names)}`}
 									>
 										<FileTextIcon className="size-4" />
 									</Button>
@@ -300,6 +305,7 @@ export function ContainersTable({
 										className="h-8 w-8"
 										onClick={() => onViewStats(container)}
 										disabled={busy}
+										aria-label={`View stats for container ${formatContainerName(container.names)}`}
 									>
 										<ActivityIcon className="size-4" />
 									</Button>

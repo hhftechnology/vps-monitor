@@ -362,8 +362,11 @@ func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
 	if req.Discord != nil {
 		discordToken := strings.TrimSpace(req.Discord.BotToken)
 		if discordToken == secretMask {
-			if fc.Bot != nil && fc.Bot.Discord != nil {
+			if fc.Bot != nil && fc.Bot.Discord != nil && fc.Bot.Discord.BotToken != "" {
 				discordToken = fc.Bot.Discord.BotToken
+			} else {
+				http.Error(w, "no stored discord token found; provide the actual token", http.StatusBadRequest)
+				return
 			}
 		}
 
@@ -441,8 +444,11 @@ func (ar *APIRouter) TestDiscordBot(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(req.BotToken)
 	if token == secretMask {
 		fc := ar.manager.FileConfigSnapshot()
-		if fc.Bot != nil && fc.Bot.Discord != nil {
+		if fc.Bot != nil && fc.Bot.Discord != nil && fc.Bot.Discord.BotToken != "" {
 			token = fc.Bot.Discord.BotToken
+		} else {
+			http.Error(w, "no stored discord token found; provide the actual token", http.StatusBadRequest)
+			return
 		}
 	}
 

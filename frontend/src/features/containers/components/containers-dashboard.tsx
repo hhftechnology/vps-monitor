@@ -172,6 +172,7 @@ export function ContainersDashboard() {
 				case "state":
 					return container.state.toLowerCase();
 				case "uptime":
+					return Date.now() - (container.created * 1000);
 				case "created":
 					return container.created;
 				case "cpu":

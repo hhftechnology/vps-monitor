@@ -230,7 +230,7 @@ export function ContainerDetailsSheet({
 									<CardContent className="p-3 text-sm">
 										1h CPU
 										<div className="font-semibold">
-											{historyStats.cpu_1h.toFixed(1)}%
+											{historyStats.cpu_1h != null ? `${historyStats.cpu_1h.toFixed(1)}%` : "N/A"}
 										</div>
 									</CardContent>
 								</Card>
@@ -238,7 +238,7 @@ export function ContainerDetailsSheet({
 									<CardContent className="p-3 text-sm">
 										1h RAM
 										<div className="font-semibold">
-											{historyStats.memory_1h.toFixed(1)}%
+											{historyStats.memory_1h != null ? `${historyStats.memory_1h.toFixed(1)}%` : "N/A"}
 										</div>
 									</CardContent>
 								</Card>
@@ -246,7 +246,7 @@ export function ContainerDetailsSheet({
 									<CardContent className="p-3 text-sm">
 										12h CPU
 										<div className="font-semibold">
-											{historyStats.cpu_12h.toFixed(1)}%
+											{historyStats.cpu_12h != null ? `${historyStats.cpu_12h.toFixed(1)}%` : "N/A"}
 										</div>
 									</CardContent>
 								</Card>
@@ -254,7 +254,7 @@ export function ContainerDetailsSheet({
 									<CardContent className="p-3 text-sm">
 										12h RAM
 										<div className="font-semibold">
-											{historyStats.memory_12h.toFixed(1)}%
+											{historyStats.memory_12h != null ? `${historyStats.memory_12h.toFixed(1)}%` : "N/A"}
 										</div>
 									</CardContent>
 								</Card>

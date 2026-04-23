@@ -747,6 +747,7 @@ func TestDiscordBotEnvConfigParsesAndDisablesWhenIncomplete(t *testing.T) {
 	t.Setenv("BOT_DISCORD_ENABLED", "true")
 	t.Setenv("BOT_DISCORD_TOKEN", "discord-token")
 	t.Setenv("BOT_DISCORD_APPLICATION_ID", "app-1")
+	t.Setenv("BOT_DISCORD_ALLOWED_CHANNEL_ID", "")
 
 	cfg := NewConfig()
 	if cfg.Bot.Discord.Enabled {

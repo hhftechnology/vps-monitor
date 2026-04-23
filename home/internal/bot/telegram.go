@@ -29,6 +29,7 @@ var (
 
 type Service struct {
 	mu               sync.Mutex
+	restartMu        sync.Mutex
 	registry         *services.Registry
 	commands         *commandHandler
 	client           *http.Client
@@ -115,6 +116,9 @@ func (s *Service) Stop() {
 }
 
 func (s *Service) UpdateConfig(cfg config.BotConfig) {
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+
 	s.Stop()
 
 	s.mu.Lock()
@@ -221,7 +225,7 @@ func (s *Service) pollOnce(ctx context.Context, cfg config.BotConfig) error {
 
 	res, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return sanitizeError(err, cfg.TelegramToken)
 	}
 	defer res.Body.Close()
 
@@ -275,7 +279,7 @@ func (s *Service) sendMessage(ctx context.Context, token, chatID, text string) e
 
 	res, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return sanitizeError(err, token)
 	}
 	defer res.Body.Close()
 
@@ -296,4 +300,11 @@ func (s *Service) apiURL(token, method string, params url.Values) string {
 
 func isConfigured(cfg config.BotConfig) bool {
 	return cfg.Enabled && strings.TrimSpace(cfg.TelegramToken) != "" && strings.TrimSpace(cfg.AllowedChatID) != ""
+}
+
+func sanitizeError(err error, token string) error {
+	if err == nil || token == "" {
+		return err
+	}
+	return errors.New(strings.ReplaceAll(err.Error(), token, "***"))
 }

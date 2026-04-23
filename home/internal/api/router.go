@@ -278,14 +278,14 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 
 		r.Get("/", ar.GetSettings)
 		r.Put("/read-only", ar.UpdateReadOnly)
-		r.Post("/test/bot", ar.TestBot)
-		r.Post("/test/discord-bot", ar.TestDiscordBot)
 		r.Post("/test/docker-host", ar.TestDockerHost)
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
 		r.Group(func(mutating chi.Router) {
 			mutating.Use(middleware.ReadOnly(func() bool {
 				return ar.registry.Config().ReadOnly
 			}))
+			mutating.Post("/test/bot", ar.TestBot)
+			mutating.Post("/test/discord-bot", ar.TestDiscordBot)
 			mutating.Put("/docker-hosts", ar.UpdateDockerHosts)
 			mutating.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
 			mutating.Put("/auth", ar.UpdateAuth)

@@ -16,12 +16,53 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 	"github.com/hhftechnology/vps-monitor/internal/system"
+	"github.com/hhftechnology/vps-monitor/internal/docker"
+	"sync"
 )
 
 // Pre-compiled regex for validating environment variable keys (performance optimization)
 var envKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 const containerStatsBootstrapLimit = 60
+
+type ContainerActionJob struct {
+	Host      string
+	ID        string
+	Action    string
+	Status    string
+	Error     string
+	ExpiresAt time.Time
+}
+
+var (
+	actionJobsMu sync.RWMutex
+	actionJobs   = make(map[string]*ContainerActionJob)
+)
+
+func RecordActionJob(host, id, action, status, errStr string) {
+	actionJobsMu.Lock()
+	defer actionJobsMu.Unlock()
+	key := host + ":" + id + ":" + action
+	actionJobs[key] = &ContainerActionJob{
+		Host:      host,
+		ID:        id,
+		Action:    action,
+		Status:    status,
+		Error:     errStr,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	for k, v := range actionJobs {
+		if time.Now().After(v.ExpiresAt) {
+			delete(actionJobs, k)
+		}
+	}
+}
+
+func GetActionJob(host, id, action string) *ContainerActionJob {
+	actionJobsMu.RLock()
+	defer actionJobsMu.RUnlock()
+	return actionJobs[host+":"+id+":"+action]
+}
 
 type coolifyEnvSyncer interface {
 	SyncEnvVars(ctx context.Context, resource *coolify.ResourceInfo, envVars map[string]string) error
@@ -264,9 +305,8 @@ func (ar *APIRouter) StopContainer(w http.ResponseWriter, r *http.Request) {
 		"status":  "pending",
 	})
 
-	go ar.runAsyncContainerAction(host, id, "stop", func(ctx context.Context) error {
-		defer releaseDocker()
-		return dockerClient.StopContainer(ctx, host, id)
+	ar.runAsyncContainerAction(host, id, "stop", func(ctx context.Context, client *docker.MultiHostClient) error {
+		return client.StopContainer(ctx, host, id)
 	})
 }
 
@@ -291,9 +331,8 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 		"status":  "pending",
 	})
 
-	go ar.runAsyncContainerAction(host, id, "restart", func(ctx context.Context) error {
-		defer releaseDocker()
-		return dockerClient.RestartContainer(ctx, host, id)
+	ar.runAsyncContainerAction(host, id, "restart", func(ctx context.Context, client *docker.MultiHostClient) error {
+		return client.RestartContainer(ctx, host, id)
 	})
 }
 
@@ -318,9 +357,8 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		"status":  "pending",
 	})
 
-	go ar.runAsyncContainerAction(host, id, "remove", func(ctx context.Context) error {
-		defer releaseDocker()
-		return dockerClient.RemoveContainer(ctx, host, id)
+	ar.runAsyncContainerAction(host, id, "remove", func(ctx context.Context, client *docker.MultiHostClient) error {
+		return client.RemoveContainer(ctx, host, id)
 	})
 }
 
@@ -354,13 +392,28 @@ func (ar *APIRouter) GetContainerHistoricalStats(w http.ResponseWriter, r *http.
 	WriteJsonResponse(w, http.StatusOK, history)
 }
 
-func (ar *APIRouter) runAsyncContainerAction(host, id, action string, fn func(context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
+func (ar *APIRouter) runAsyncContainerAction(host, id, action string, fn func(context.Context, *docker.MultiHostClient) error) {
+	RecordActionJob(host, id, action, "pending", "")
+	go func() {
+		dockerClient, release := ar.registry.AcquireDocker()
+		defer release()
 
-	if err := fn(ctx); err != nil {
-		log.Printf("failed to %s container %s on host %s: %v", action, id, host, err)
-	}
+		if dockerClient == nil {
+			log.Printf("failed to %s container %s on host %s: docker client unavailable", action, id, host)
+			RecordActionJob(host, id, action, "failed", "docker client unavailable")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+
+		if err := fn(ctx, dockerClient); err != nil {
+			log.Printf("failed to %s container %s on host %s: %v", action, id, host, err)
+			RecordActionJob(host, id, action, "failed", err.Error())
+		} else {
+			RecordActionJob(host, id, action, "success", "")
+		}
+	}()
 }
 
 func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Request) {

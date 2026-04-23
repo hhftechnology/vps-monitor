@@ -15,19 +15,32 @@ vi.mock("../hooks/use-container-history", () => ({
   useContainerHistory: (...args: unknown[]) => mockUseContainerHistory(...args),
 }));
 
-vi.mock("@/components/ui/tabs", () => ({
-  Tabs: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  TabsContent: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  TabsList: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  TabsTrigger: ({
-    children,
-    value: _value,
-    ...props
-  }: {
-    children?: ReactNode;
-    value: string;
-  }) => <button type="button" {...props}>{children}</button>,
-}));
+vi.mock("@/components/ui/tabs", async () => {
+  const React = await import("react");
+  const TabsContext = React.createContext<{ value: string; onValueChange: (v: string) => void }>({ value: "", onValueChange: () => {} });
+  
+  return {
+    Tabs: ({ value, defaultValue, onValueChange, children }: any) => {
+      const [v, setV] = React.useState(value || defaultValue);
+      const handleChange = (newV: string) => {
+        setV(newV);
+        if (onValueChange) onValueChange(newV);
+      };
+      React.useEffect(() => { if (value !== undefined) setV(value); }, [value]);
+      return <TabsContext.Provider value={{ value: v, onValueChange: handleChange }}><div>{children}</div></TabsContext.Provider>;
+    },
+    TabsContent: ({ value, children }: any) => {
+      const context = React.useContext(TabsContext);
+      if (context.value !== value) return null;
+      return <div>{children}</div>;
+    },
+    TabsList: ({ children }: any) => <div>{children}</div>,
+    TabsTrigger: ({ value, children, disabled, ...props }: any) => {
+      const context = React.useContext(TabsContext);
+      return <button type="button" disabled={disabled} onClick={() => context.onValueChange(value)} {...props}>{children}</button>;
+    },
+  };
+});
 
 vi.mock("./environment-variables", () => ({
   EnvironmentVariables: ({

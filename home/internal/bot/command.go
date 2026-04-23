@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/models"
@@ -92,6 +93,8 @@ func (h *commandHandler) buildStatusMessage() string {
 	}
 
 	var lines []containerLine
+	var linesMu sync.Mutex
+	var wg sync.WaitGroup
 	total := 0
 	running := 0
 	history := h.registry.Alerts()
@@ -111,26 +114,33 @@ func (h *commandHandler) buildStatusMessage() string {
 			}
 			running++
 
-			stats, err := dockerClient.GetContainerStatsOnce(ctx, hostName, ctr.ID)
-			if err != nil {
-				continue
-			}
+			wg.Add(1)
+			go func(hName string, c models.Container) {
+				defer wg.Done()
+				stats, err := dockerClient.GetContainerStatsOnce(ctx, hName, c.ID)
+				if err != nil {
+					return
+				}
 
-			name := ctr.ID[:12]
-			if len(ctr.Names) > 0 {
-				name = strings.TrimPrefix(ctr.Names[0], "/")
-			}
+				name := c.ID[:12]
+				if len(c.Names) > 0 {
+					name = strings.TrimPrefix(c.Names[0], "/")
+				}
 
-			line := fmt.Sprintf("- %s@%s CPU %.1f%% MEM %.1f%%", name, hostName, stats.CPUPercent, stats.MemoryPercent)
-			if historyManager != nil {
-				cpu1h, mem1h, has1h := historyManager.Get1hAverages(hostName, ctr.ID)
-				cpu12h, mem12h, has12h := historyManager.Get12hAverages(hostName, ctr.ID)
-				line = appendHistoryAverages(line, cpu1h, mem1h, has1h, cpu12h, mem12h, has12h)
-			}
+				line := fmt.Sprintf("- %s@%s CPU %.1f%% MEM %.1f%%", name, hName, stats.CPUPercent, stats.MemoryPercent)
+				if historyManager != nil {
+					cpu1h, mem1h, has1h := historyManager.Get1hAverages(hName, c.ID)
+					cpu12h, mem12h, has12h := historyManager.Get12hAverages(hName, c.ID)
+					line = appendHistoryAverages(line, cpu1h, mem1h, has1h, cpu12h, mem12h, has12h)
+				}
 
-			lines = append(lines, containerLine{name: name, cpu: stats.CPUPercent, line: line})
+				linesMu.Lock()
+				lines = append(lines, containerLine{name: name, cpu: stats.CPUPercent, line: line})
+				linesMu.Unlock()
+			}(hostName, ctr)
 		}
 	}
+	wg.Wait()
 
 	sort.SliceStable(lines, func(i, j int) bool {
 		return lines[i].cpu > lines[j].cpu
@@ -153,11 +163,4 @@ func appendHistoryAverages(line string, cpu1h, mem1h float64, has1h bool, cpu12h
 		line += fmt.Sprintf(" | 12h %.1f/%.1f", cpu12h, mem12h)
 	}
 	return line
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
