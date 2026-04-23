@@ -115,7 +115,7 @@ func (h *commandHandler) buildStatusMessage() string {
 			running++
 
 			wg.Add(1)
-			go func(hName string, c models.Container) {
+			go func(hName string, c models.ContainerInfo) {
 				defer wg.Done()
 				stats, err := dockerClient.GetContainerStatsOnce(ctx, hName, c.ID)
 				if err != nil {
