@@ -21,6 +21,8 @@ import (
 // Pre-compiled regex for validating environment variable keys (performance optimization)
 var envKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+const containerStatsBootstrapLimit = 60
+
 type coolifyEnvSyncer interface {
 	SyncEnvVars(ctx context.Context, resource *coolify.ResourceInfo, envVars map[string]string) error
 }
@@ -35,6 +37,47 @@ func isNilCoolifySyncer(syncer coolifyEnvSyncer) bool {
 		return value.IsNil()
 	default:
 		return false
+	}
+}
+
+func (ar *APIRouter) getContainerHistoricalAverages(host, containerID string) (models.HistoricalAverages, error) {
+	if ar.statsDB == nil {
+		return models.HistoricalAverages{}, fmt.Errorf("stats database not available")
+	}
+	return ar.statsDB.GetContainerHistoricalAverages(host, containerID, time.Now())
+}
+
+func (ar *APIRouter) getContainerHistoricalSamples(host, containerID string) ([]models.ContainerStats, error) {
+	if ar.statsDB == nil {
+		return nil, fmt.Errorf("stats database not available")
+	}
+	return ar.statsDB.GetRecentContainerStats(
+		host,
+		containerID,
+		time.Now().Add(-12*time.Hour),
+		containerStatsBootstrapLimit,
+	)
+}
+
+func (ar *APIRouter) enrichContainersWithHistoricalStats(containers []models.ContainerInfo) {
+	if ar.statsDB == nil {
+		return
+	}
+
+	for i := range containers {
+		history, err := ar.getContainerHistoricalAverages(containers[i].Host, containers[i].ID)
+		if err != nil {
+			log.Printf("failed to load container history for %s on %s: %v", containers[i].ID, containers[i].Host, err)
+			continue
+		}
+		if history.HasData {
+			containers[i].HistoricalStats = &models.HistoricalStats{
+				CPU1h:     history.CPU1h,
+				Memory1h:  history.Memory1h,
+				CPU12h:    history.CPU12h,
+				Memory12h: history.Memory12h,
+			}
+		}
 	}
 }
 
@@ -77,21 +120,7 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 		allContainers = append(allContainers, containers...)
 	}
 
-	if alertMonitor := ar.registry.Alerts(); alertMonitor != nil {
-		history := alertMonitor.GetStatsHistory()
-		for i := range allContainers {
-			cpu1h, memory1h, has1h := history.Get1hAverages(allContainers[i].Host, allContainers[i].ID)
-			cpu12h, memory12h, has12h := history.Get12hAverages(allContainers[i].Host, allContainers[i].ID)
-			if has1h || has12h {
-				allContainers[i].HistoricalStats = &models.HistoricalStats{
-					CPU1h:     cpu1h,
-					Memory1h:  memory1h,
-					CPU12h:    cpu12h,
-					Memory12h: memory12h,
-				}
-			}
-		}
-	}
+	ar.enrichContainersWithHistoricalStats(allContainers)
 
 	// Build host errors list for the frontend (graceful partial results)
 	hostErrorMessages := make([]map[string]string, 0, len(hostErrors))
@@ -296,8 +325,7 @@ func (ar *APIRouter) GetContainerHistoricalStats(w http.ResponseWriter, r *http.
 	id := chi.URLParam(r, "id")
 	host := r.URL.Query().Get("host")
 
-	alertMonitor := ar.registry.Alerts()
-	if alertMonitor == nil {
+	if ar.statsDB == nil {
 		http.Error(w, "stats history not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -307,17 +335,20 @@ func (ar *APIRouter) GetContainerHistoricalStats(w http.ResponseWriter, r *http.
 		return
 	}
 
-	history := alertMonitor.GetStatsHistory()
-	cpu1h, memory1h, has1h := history.Get1hAverages(host, id)
-	cpu12h, memory12h, has12h := history.Get12hAverages(host, id)
+	history, err := ar.getContainerHistoricalAverages(host, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	WriteJsonResponse(w, http.StatusOK, models.HistoricalAverages{
-		CPU1h:     cpu1h,
-		Memory1h:  memory1h,
-		CPU12h:    cpu12h,
-		Memory12h: memory12h,
-		HasData:   has1h || has12h,
-	})
+	samples, err := ar.getContainerHistoricalSamples(host, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	history.Samples = samples
+	WriteJsonResponse(w, http.StatusOK, history)
 }
 
 func (ar *APIRouter) runAsyncContainerAction(host, id, action string, fn func(context.Context) error) {

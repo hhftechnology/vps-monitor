@@ -100,6 +100,9 @@ export function ContainersTable({
 	const isContainerBusy = (containerId: string) =>
 		pendingAction?.id === containerId;
 
+	const formatHistoricalMetric = (value: number | null) =>
+		value === null ? "Collecting" : `${value.toFixed(1)}%`;
+
 	const renderContainerRow = (container: ContainerInfo) => {
 		const state = container.state.toLowerCase();
 		const busy = isContainerBusy(container.id);
@@ -127,14 +130,25 @@ export function ContainersTable({
 				<TableCell className="h-16 px-4 font-medium">
 					{formatContainerName(container.names)}
 				</TableCell>
-				<TableCell
-					className="h-16 px-4 text-sm text-muted-foreground cursor-pointer"
-					onClick={() => {
-						navigator.clipboard?.writeText(container.image);
-					}}
-					title="Click to copy image name"
-				>
-					{container.image}
+				<TableCell className="h-16 px-4 text-sm text-muted-foreground">
+					<TooltipProvider>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<span
+									className="block max-w-[260px] cursor-pointer truncate"
+									onClick={() => {
+										navigator.clipboard?.writeText(container.image);
+									}}
+									title="Click to copy image name"
+								>
+									{container.image}
+								</span>
+							</TooltipTrigger>
+							<TooltipContent className="max-w-md break-all">
+								{container.image}
+							</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
 				</TableCell>
 				<TableCell className="h-16 px-4">
 					<Badge className={`${getStateBadgeClass(container.state)} border-0`}>
@@ -148,20 +162,20 @@ export function ContainersTable({
 					{formatCreatedDate(container.created)}
 				</TableCell>
 				<TableCell className="h-16 px-4 text-sm text-muted-foreground">
-					{cpuAverage === null ? "—" : `${cpuAverage.toFixed(1)}%`}
+					{formatHistoricalMetric(cpuAverage)}
 				</TableCell>
 				<TableCell className="h-16 px-4 text-sm text-muted-foreground">
-					{memoryAverage === null ? "—" : `${memoryAverage.toFixed(1)}%`}
+					{formatHistoricalMetric(memoryAverage)}
 				</TableCell>
-				<TableCell className="h-16 px-4 max-w-[300px] text-sm text-muted-foreground">
+				<TableCell className="h-16 max-w-[300px] px-4 text-sm text-muted-foreground">
 					<TooltipProvider>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<span className="block cursor-help truncate">
+								<span className="block max-w-[280px] cursor-help truncate">
 									{container.command}
 								</span>
 							</TooltipTrigger>
-							<TooltipContent className="max-w-md">
+							<TooltipContent className="max-w-md break-all">
 								{container.command}
 							</TooltipContent>
 						</Tooltip>
@@ -298,8 +312,8 @@ export function ContainersTable({
 	};
 
 	return (
-		<div className="rounded-lg border bg-card">
-			<Table>
+		<div className="overflow-x-auto rounded-lg border bg-card">
+			<Table className="min-w-[1180px]">
 				<TableHeader>
 					<TableRow className="hover:bg-transparent border-b">
 						<TableHead className="h-12 w-10 px-4">
@@ -373,7 +387,7 @@ export function ContainersTable({
 									>
 										<button
 											type="button"
-											className="inline-flex items-center gap-2"
+											className="inline-flex max-w-full items-center gap-2 truncate"
 											onClick={() => onToggleGroup(group.project)}
 										>
 											{expandedGroups.includes(group.project) ? (
@@ -381,9 +395,11 @@ export function ContainersTable({
 											) : (
 												<ChevronRightIcon className="size-4" />
 											)}
-											{group.project} · {group.items.length} container
+											<span className="truncate">
+												{group.project} · {group.items.length}{" "}
+												{group.items.length === 1 ? "container" : "containers"}
+											</span>
 										</button>
-										{group.items.length === 1 ? "" : "s"}
 									</TableCell>
 								</TableRow>
 								{expandedGroups.includes(group.project)

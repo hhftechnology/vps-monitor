@@ -1,15 +1,19 @@
 import { useMemo } from "react";
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
+  Line,
+  LineChart,
   XAxis,
   YAxis,
 } from "recharts";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 
 import type { ContainerStats } from "../types/stats";
 
@@ -17,24 +21,7 @@ interface ContainerStatsChartsProps {
   history: ContainerStats[];
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
-}
-
-function formatTime(timestamp: number): string {
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-interface ChartData {
+type ChartData = {
   time: string;
   timestamp: number;
   cpu: number;
@@ -45,6 +32,106 @@ interface ChartData {
   networkTx: number;
   blockRead: number;
   blockWrite: number;
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+  return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
+}
+
+function formatTime(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+const cpuChartConfig = {
+  cpu: {
+    label: "CPU",
+    color: "var(--chart-1)",
+  },
+} satisfies ChartConfig;
+
+const memoryChartConfig = {
+  memory: {
+    label: "Memory",
+    color: "var(--chart-2)",
+  },
+} satisfies ChartConfig;
+
+const networkChartConfig = {
+  networkRx: {
+    label: "RX (Received)",
+    color: "var(--chart-3)",
+  },
+  networkTx: {
+    label: "TX (Transmitted)",
+    color: "var(--chart-4)",
+  },
+} satisfies ChartConfig;
+
+const blockChartConfig = {
+  blockRead: {
+    label: "Read",
+    color: "var(--chart-5)",
+  },
+  blockWrite: {
+    label: "Write",
+    color: "var(--destructive)",
+  },
+} satisfies ChartConfig;
+
+interface StatsChartCardProps {
+  title: string;
+  data: ChartData[];
+  config: ChartConfig;
+  children: React.ReactElement;
+  legend?: React.ReactNode;
+}
+
+function StatsChartCard({
+  title,
+  data,
+  config,
+  children,
+  legend,
+}: StatsChartCardProps) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <ChartContainer config={config} className="h-[220px] w-full">
+          {children}
+        </ChartContainer>
+        {data.length > 0 ? legend : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SeriesLegend({ config }: { config: ChartConfig }) {
+  return (
+    <div className="flex flex-wrap justify-center gap-4 text-xs text-muted-foreground">
+      {Object.entries(config).map(([key, value]) => (
+        <div key={key} className="flex items-center gap-1.5">
+          <span
+            className="size-2 rounded-full"
+            style={{ backgroundColor: value.color }}
+          />
+          <span>{value.label}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function ContainerStatsCharts({ history }: ContainerStatsChartsProps) {
@@ -63,283 +150,176 @@ export function ContainerStatsCharts({ history }: ContainerStatsChartsProps) {
     }));
   }, [history]);
 
-  if (history.length === 0) {
+  if (chartData.length === 0) {
     return (
-      <div className="py-8 text-center text-muted-foreground text-sm">
+      <div className="py-8 text-center text-sm text-muted-foreground">
         No data yet. Stats will appear once streaming begins.
       </div>
     );
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {/* CPU Chart */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">CPU Usage (%)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  className="text-muted-foreground"
-                />
-                <YAxis
-                  domain={[0, 100]}
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}%`}
-                  className="text-muted-foreground"
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "var(--radius)",
-                  }}
-                  labelStyle={{ color: "hsl(var(--foreground))" }}
-                  formatter={(value) => [`${(value as number).toFixed(2)}%`, "CPU"]}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="cpu"
-                  stroke="hsl(var(--primary))"
-                  fill="url(#cpuGradient)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="grid gap-4 xl:grid-cols-2">
+      <StatsChartCard title="CPU Usage (%)" data={chartData} config={cpuChartConfig}>
+        <LineChart accessibilityLayer data={chartData}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            axisLine={false}
+            dataKey="time"
+            minTickGap={32}
+            tickLine={false}
+          />
+          <YAxis
+            axisLine={false}
+            domain={[0, 100]}
+            tickFormatter={(value) => `${value}%`}
+            tickLine={false}
+            width={44}
+          />
+          <ChartTooltip
+            content={
+              <ChartTooltipContent
+                formatter={(value) => `${Number(value).toFixed(2)}%`}
+              />
+            }
+          />
+          <Line
+            dataKey="cpu"
+            dot={false}
+            stroke="var(--color-cpu)"
+            strokeWidth={2}
+            type="monotone"
+          />
+        </LineChart>
+      </StatsChartCard>
 
-      {/* Memory Chart */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Memory Usage (%)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="memoryGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--chart-2))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  className="text-muted-foreground"
-                />
-                <YAxis
-                  domain={[0, 100]}
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}%`}
-                  className="text-muted-foreground"
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "var(--radius)",
-                  }}
-                  labelStyle={{ color: "hsl(var(--foreground))" }}
-                  formatter={(value, _name, props) => {
-                    const payload = (props as { payload: ChartData }).payload;
-                    return [
-                      `${(value as number).toFixed(2)}% (${formatBytes(payload.memoryUsage)} / ${formatBytes(payload.memoryLimit)})`,
-                      "Memory",
-                    ];
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="memory"
-                  stroke="hsl(var(--chart-2))"
-                  fill="url(#memoryGradient)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      <StatsChartCard
+        title="Memory Usage (%)"
+        data={chartData}
+        config={memoryChartConfig}
+      >
+        <LineChart accessibilityLayer data={chartData}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            axisLine={false}
+            dataKey="time"
+            minTickGap={32}
+            tickLine={false}
+          />
+          <YAxis
+            axisLine={false}
+            domain={[0, 100]}
+            tickFormatter={(value) => `${value}%`}
+            tickLine={false}
+            width={44}
+          />
+          <ChartTooltip
+            content={
+              <ChartTooltipContent
+                formatter={(value, _name, item) => {
+                  const payload = item.payload as ChartData | undefined;
+                  return `${Number(value).toFixed(2)}% (${formatBytes(payload?.memoryUsage ?? 0)} / ${formatBytes(payload?.memoryLimit ?? 0)})`;
+                }}
+              />
+            }
+          />
+          <Line
+            dataKey="memory"
+            dot={false}
+            stroke="var(--color-memory)"
+            strokeWidth={2}
+            type="monotone"
+          />
+        </LineChart>
+      </StatsChartCard>
 
-      {/* Network I/O Chart */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Network I/O</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="rxGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--chart-3))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--chart-3))" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="txGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--chart-4))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--chart-4))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  className="text-muted-foreground"
-                />
-                <YAxis
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => formatBytes(value)}
-                  className="text-muted-foreground"
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "var(--radius)",
-                  }}
-                  labelStyle={{ color: "hsl(var(--foreground))" }}
-                  formatter={(value, name) => [
-                    formatBytes(value as number),
-                    name === "networkRx" ? "RX (Received)" : "TX (Transmitted)",
-                  ]}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="networkRx"
-                  stroke="hsl(var(--chart-3))"
-                  fill="url(#rxGradient)"
-                  strokeWidth={2}
-                  name="networkRx"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="networkTx"
-                  stroke="hsl(var(--chart-4))"
-                  fill="url(#txGradient)"
-                  strokeWidth={2}
-                  name="networkTx"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-2 flex justify-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <div className="size-2 rounded-full" style={{ backgroundColor: "hsl(var(--chart-3))" }} />
-              <span>RX (Received)</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="size-2 rounded-full" style={{ backgroundColor: "hsl(var(--chart-4))" }} />
-              <span>TX (Transmitted)</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <StatsChartCard
+        title="Network I/O"
+        data={chartData}
+        config={networkChartConfig}
+        legend={<SeriesLegend config={networkChartConfig} />}
+      >
+        <LineChart accessibilityLayer data={chartData}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            axisLine={false}
+            dataKey="time"
+            minTickGap={32}
+            tickLine={false}
+          />
+          <YAxis
+            axisLine={false}
+            tickFormatter={(value) => formatBytes(Number(value))}
+            tickLine={false}
+            width={64}
+          />
+          <ChartTooltip
+            content={
+              <ChartTooltipContent
+                formatter={(value) => formatBytes(Number(value))}
+              />
+            }
+          />
+          <Line
+            dataKey="networkRx"
+            dot={false}
+            stroke="var(--color-networkRx)"
+            strokeWidth={2}
+            type="monotone"
+          />
+          <Line
+            dataKey="networkTx"
+            dot={false}
+            stroke="var(--color-networkTx)"
+            strokeWidth={2}
+            type="monotone"
+          />
+        </LineChart>
+      </StatsChartCard>
 
-      {/* Block I/O Chart */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Block I/O</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="readGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--chart-5))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--chart-5))" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="writeGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--destructive))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--destructive))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  className="text-muted-foreground"
-                />
-                <YAxis
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => formatBytes(value)}
-                  className="text-muted-foreground"
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "var(--radius)",
-                  }}
-                  labelStyle={{ color: "hsl(var(--foreground))" }}
-                  formatter={(value, name) => [
-                    formatBytes(value as number),
-                    name === "blockRead" ? "Read" : "Write",
-                  ]}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="blockRead"
-                  stroke="hsl(var(--chart-5))"
-                  fill="url(#readGradient)"
-                  strokeWidth={2}
-                  name="blockRead"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="blockWrite"
-                  stroke="hsl(var(--destructive))"
-                  fill="url(#writeGradient)"
-                  strokeWidth={2}
-                  name="blockWrite"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-2 flex justify-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <div className="size-2 rounded-full" style={{ backgroundColor: "hsl(var(--chart-5))" }} />
-              <span>Read</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="size-2 rounded-full" style={{ backgroundColor: "hsl(var(--destructive))" }} />
-              <span>Write</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <StatsChartCard
+        title="Block I/O"
+        data={chartData}
+        config={blockChartConfig}
+        legend={<SeriesLegend config={blockChartConfig} />}
+      >
+        <LineChart accessibilityLayer data={chartData}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            axisLine={false}
+            dataKey="time"
+            minTickGap={32}
+            tickLine={false}
+          />
+          <YAxis
+            axisLine={false}
+            tickFormatter={(value) => formatBytes(Number(value))}
+            tickLine={false}
+            width={64}
+          />
+          <ChartTooltip
+            content={
+              <ChartTooltipContent
+                formatter={(value) => formatBytes(Number(value))}
+              />
+            }
+          />
+          <Line
+            dataKey="blockRead"
+            dot={false}
+            stroke="var(--color-blockRead)"
+            strokeWidth={2}
+            type="monotone"
+          />
+          <Line
+            dataKey="blockWrite"
+            dot={false}
+            stroke="var(--color-blockWrite)"
+            strokeWidth={2}
+            type="monotone"
+          />
+        </LineChart>
+      </StatsChartCard>
     </div>
   );
 }

@@ -38,6 +38,7 @@ type APIRouter struct {
 	alertHandlers *AlertHandlers
 	scanHandlers  *ScanHandlers
 	botService    botRelayService
+	statsDB       *scanner.ScanDB
 }
 
 // RouterOptions contains optional dependencies for the router
@@ -46,6 +47,7 @@ type RouterOptions struct {
 	ScannerService *scanner.ScannerService
 	AutoScanner    *scanner.AutoScanner
 	BotService     botRelayService
+	ScanDB         *scanner.ScanDB
 }
 
 func NewRouter(registry *services.Registry, manager *config.Manager, opts *RouterOptions) *chi.Mux {
@@ -58,6 +60,10 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 	}
 	if opts != nil {
 		r.botService = opts.BotService
+		r.statsDB = opts.ScanDB
+		if r.statsDB == nil && opts.ScannerService != nil {
+			r.statsDB = opts.ScannerService.Store().DB()
+		}
 	}
 
 	// Set up scan handlers

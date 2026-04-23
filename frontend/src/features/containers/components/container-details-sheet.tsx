@@ -29,6 +29,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+import { useContainerHistory } from "../hooks/use-container-history";
 import { useContainerStats } from "../hooks/use-container-stats";
 import type { ContainerInfo } from "../types";
 import { ContainerStatsCharts } from "./container-stats-charts";
@@ -85,6 +86,11 @@ export function ContainerDetailsSheet({
 		host,
 		enabled: isOpen && activeTab === "stats",
 	});
+	const { data: persistedHistory } = useContainerHistory(
+		effectiveContainerId,
+		host,
+		isOpen && activeTab === "stats",
+	);
 
 	const handleContainerIdChange = useCallback((newId: string) => {
 		setContainerId(newId);
@@ -145,10 +151,28 @@ export function ContainerDetailsSheet({
 		container.names?.[0]?.replace(/^\//, "") || container.id.slice(0, 12);
 	const isRunning = container.state.toLowerCase() === "running";
 	const historyStats = container.historical_stats;
+	const chartHistory = useMemo(() => {
+		const persistedSamples = persistedHistory?.samples ?? [];
+		if (persistedSamples.length === 0) {
+			return history;
+		}
+
+		const merged = new Map<number, (typeof persistedSamples)[number]>();
+		for (const sample of persistedSamples) {
+			merged.set(sample.timestamp, sample);
+		}
+		for (const sample of history) {
+			merged.set(sample.timestamp, sample);
+		}
+
+		return Array.from(merged.values())
+			.sort((a, b) => a.timestamp - b.timestamp)
+			.slice(-60);
+	}, [history, persistedHistory?.samples]);
 
 	return (
 		<Sheet open={isOpen} onOpenChange={onOpenChange}>
-			<SheetContent className="sm:max-w-2xl w-full overflow-y-auto p-0">
+			<SheetContent className="w-full overflow-y-auto p-0 sm:max-w-4xl">
 				<SheetHeader className="px-6 pt-6">
 					<SheetTitle className="flex items-center gap-2">
 						{containerName}
@@ -167,7 +191,7 @@ export function ContainerDetailsSheet({
 				<Tabs
 					value={activeTab}
 					onValueChange={setActiveTab}
-					className="flex-1 flex flex-col px-6 pb-6"
+					className="flex flex-1 flex-col px-6 pb-6"
 				>
 					<TabsList className="grid w-full grid-cols-3">
 						<TabsTrigger value="stats" className="flex items-center gap-2">
@@ -188,7 +212,7 @@ export function ContainerDetailsSheet({
 						</TabsTrigger>
 					</TabsList>
 
-					<TabsContent value="stats" className="space-y-6 mt-4">
+					<TabsContent value="stats" className="mt-4 flex flex-col gap-6">
 						{historyStats && (
 							<div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
 								<Card>
@@ -226,7 +250,7 @@ export function ContainerDetailsSheet({
 							</div>
 						)}
 						{/* Stats Controls */}
-						<div className="flex items-center justify-between gap-4">
+						<div className="flex flex-wrap items-center justify-between gap-4">
 							<div className="flex items-center gap-2">
 								<Badge variant={isConnected ? "default" : "secondary"}>
 									{isConnected ? "Live" : "Disconnected"}
@@ -295,23 +319,23 @@ export function ContainerDetailsSheet({
 
 						{/* Live Stats Cards */}
 						{statsCards && (
-							<div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+							<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
 								{statsCards.map((card) => {
 									const Icon = card.icon;
 									return (
 										<Card key={card.label} className="overflow-hidden">
 											<CardContent className="p-3">
-												<div className="flex flex-col items-center text-center gap-2">
+												<div className="flex flex-col items-center gap-2 text-center">
 													<div
 														className={`p-2 rounded-lg bg-muted ${card.color}`}
 													>
 														<Icon className="size-5" />
 													</div>
-													<div className="space-y-0.5">
+													<div className="min-w-0">
 														<p className="text-xs text-muted-foreground font-medium">
 															{card.label}
 														</p>
-														<p className="text-sm font-semibold truncate max-w-full">
+														<p className="break-words text-sm font-semibold leading-tight">
 															{card.value}
 														</p>
 														{card.subValue && (
@@ -334,7 +358,7 @@ export function ContainerDetailsSheet({
 						)}
 
 						{/* Stats Charts */}
-						<ContainerStatsCharts history={history} />
+						<ContainerStatsCharts history={chartHistory} />
 					</TabsContent>
 
 					<TabsContent value="terminal" className="min-h-[400px] mt-4">

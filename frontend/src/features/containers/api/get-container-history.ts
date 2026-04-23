@@ -2,10 +2,12 @@ import { authenticatedFetch } from "@/lib/api-client";
 import { API_BASE_URL } from "@/types/api";
 
 import type { ContainerInfo } from "../types";
+import type { ContainerStats } from "../types/stats";
 
 export interface ContainerHistoryStats
 	extends NonNullable<ContainerInfo["historical_stats"]> {
 	has_data: boolean;
+	samples: ContainerStats[];
 }
 
 export async function getContainerHistory(

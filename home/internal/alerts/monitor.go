@@ -22,23 +22,33 @@ type Monitor struct {
 	config   *config.AlertConfig
 	history  *AlertHistory
 	stats    *stats.HistoryManager
+	store    statsStore
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
 
 	// Track container states for detecting changes
 	containerStates map[string]string // key: host:containerID, value: state
 	statesMu        sync.RWMutex
+	statsRetention  time.Duration
+	lastPrune       time.Time
+}
+
+type statsStore interface {
+	InsertContainerStat(stat models.ContainerStats) error
+	PruneContainerStatsOlderThan(cutoff time.Time) error
 }
 
 // NewMonitor creates a new alert monitor
-func NewMonitor(dockerClient *docker.MultiHostClient, alertConfig *config.AlertConfig) *Monitor {
+func NewMonitor(dockerClient *docker.MultiHostClient, alertConfig *config.AlertConfig, store statsStore, statsRetention time.Duration) *Monitor {
 	return &Monitor{
 		docker:          dockerClient,
 		config:          alertConfig,
 		history:         NewAlertHistory(100), // Keep last 100 alerts
 		stats:           stats.NewHistoryManager(),
+		store:           store,
 		stopCh:          make(chan struct{}),
 		containerStates: make(map[string]string),
+		statsRetention:  statsRetention,
 	}
 }
 
@@ -56,11 +66,6 @@ func (m *Monitor) getDockerClient() *docker.MultiHostClient {
 
 // Start begins the background monitoring
 func (m *Monitor) Start() {
-	if !m.config.Enabled {
-		log.Println("Alert monitoring is disabled")
-		return
-	}
-
 	log.Printf("Starting alert monitor (interval: %s, CPU threshold: %.1f%%, Memory threshold: %.1f%%)",
 		m.config.CheckInterval, m.config.CPUThreshold, m.config.MemoryThreshold)
 
@@ -209,6 +214,11 @@ func (m *Monitor) checkResourceThresholds(ctx context.Context) {
 				continue
 			}
 			m.stats.RecordStats(hostName, ctr.ID, *stats)
+			if m.store != nil {
+				if err := m.store.InsertContainerStat(*stats); err != nil {
+					log.Printf("Alert monitor: failed to persist stats for %s on %s: %v", ctr.ID, hostName, err)
+				}
+			}
 
 			containerName := ctr.ID[:12]
 			if len(ctr.Names) > 0 {
@@ -246,10 +256,22 @@ func (m *Monitor) checkResourceThresholds(ctx context.Context) {
 			}
 		}
 	}
+
+	if m.store != nil && m.statsRetention > 0 && (m.lastPrune.IsZero() || time.Since(m.lastPrune) >= time.Hour) {
+		if err := m.store.PruneContainerStatsOlderThan(time.Now().Add(-m.statsRetention)); err != nil {
+			log.Printf("Alert monitor: failed to prune persisted stats: %v", err)
+		} else {
+			m.lastPrune = time.Now()
+		}
+	}
 }
 
 // triggerAlert handles a new alert
 func (m *Monitor) triggerAlert(alert models.Alert) {
+	if !m.config.Enabled {
+		return
+	}
+
 	log.Printf("Alert: %s - %s", alert.Type, alert.Message)
 
 	// Add to history

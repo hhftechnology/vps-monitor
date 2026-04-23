@@ -208,3 +208,9 @@ func (r *Registry) UpdateConfig(cfg *config.Config) {
 	defer r.mu.Unlock()
 	r.config = cfg
 }
+
+func (r *Registry) SwapAlerts(monitor *alerts.Monitor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.alerts = monitor
+}

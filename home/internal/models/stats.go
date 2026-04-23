@@ -17,9 +17,10 @@ type ContainerStats struct {
 }
 
 type HistoricalAverages struct {
-	CPU1h     float64 `json:"cpu_1h"`
-	Memory1h  float64 `json:"memory_1h"`
-	CPU12h    float64 `json:"cpu_12h"`
-	Memory12h float64 `json:"memory_12h"`
-	HasData   bool    `json:"has_data"`
+	CPU1h     float64          `json:"cpu_1h"`
+	Memory1h  float64          `json:"memory_1h"`
+	CPU12h    float64          `json:"cpu_12h"`
+	Memory12h float64          `json:"memory_12h"`
+	HasData   bool             `json:"has_data"`
+	Samples   []ContainerStats `json:"samples,omitempty"`
 }
