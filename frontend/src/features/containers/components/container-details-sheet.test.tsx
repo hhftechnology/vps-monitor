@@ -200,6 +200,10 @@ describe("ContainerDetailsSheet", () => {
     );
 
     fireEvent.click(
+      await screen.findByRole("button", { name: /env vars/i }),
+    );
+
+    fireEvent.click(
       await screen.findByRole("button", { name: /update container id/i }),
     );
 

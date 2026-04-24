@@ -12,6 +12,7 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
 	removeContainer,
@@ -575,38 +576,42 @@ export function ContainersDashboard() {
 							{selectedContainerIds.length} selected
 						</p>
 						<div className="flex items-center gap-3 text-sm">
-							<button type="button" onClick={() => setSelectedContainerIds([])}>
+							<Button
+								type="button"
+								variant="outline"
+								onClick={() => setSelectedContainerIds([])}
+							>
 								Clear
-							</button>
-							<button
+							</Button>
+							<Button
 								type="button"
 								disabled={isReadOnly}
 								onClick={() => handleBatchAction("start")}
 							>
 								Start
-							</button>
-							<button
+							</Button>
+							<Button
 								type="button"
 								disabled={isReadOnly}
 								onClick={() => handleBatchAction("stop")}
 							>
 								Stop
-							</button>
-							<button
+							</Button>
+							<Button
 								type="button"
 								disabled={isReadOnly}
 								onClick={() => handleBatchAction("restart")}
 							>
 								Restart
-							</button>
-							<button
+							</Button>
+							<Button
 								type="button"
-								className="text-destructive"
+								variant="destructive"
 								disabled={isReadOnly}
 								onClick={() => handleBatchAction("remove")}
 							>
 								Delete
-							</button>
+							</Button>
 						</div>
 					</div>
 				)}
