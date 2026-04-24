@@ -16,10 +16,53 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/models"
 	"github.com/hhftechnology/vps-monitor/internal/system"
+	"github.com/hhftechnology/vps-monitor/internal/docker"
+	"sync"
 )
 
 // Pre-compiled regex for validating environment variable keys (performance optimization)
 var envKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+const containerStatsBootstrapLimit = 60
+
+type ContainerActionJob struct {
+	Host      string
+	ID        string
+	Action    string
+	Status    string
+	Error     string
+	ExpiresAt time.Time
+}
+
+var (
+	actionJobsMu sync.RWMutex
+	actionJobs   = make(map[string]*ContainerActionJob)
+)
+
+func RecordActionJob(host, id, action, status, errStr string) {
+	actionJobsMu.Lock()
+	defer actionJobsMu.Unlock()
+	key := host + ":" + id + ":" + action
+	actionJobs[key] = &ContainerActionJob{
+		Host:      host,
+		ID:        id,
+		Action:    action,
+		Status:    status,
+		Error:     errStr,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	for k, v := range actionJobs {
+		if time.Now().After(v.ExpiresAt) {
+			delete(actionJobs, k)
+		}
+	}
+}
+
+func GetActionJob(host, id, action string) *ContainerActionJob {
+	actionJobsMu.RLock()
+	defer actionJobsMu.RUnlock()
+	return actionJobs[host+":"+id+":"+action]
+}
 
 type coolifyEnvSyncer interface {
 	SyncEnvVars(ctx context.Context, resource *coolify.ResourceInfo, envVars map[string]string) error
@@ -35,6 +78,47 @@ func isNilCoolifySyncer(syncer coolifyEnvSyncer) bool {
 		return value.IsNil()
 	default:
 		return false
+	}
+}
+
+func (ar *APIRouter) getContainerHistoricalAverages(host, containerID string) (models.HistoricalAverages, error) {
+	if ar.statsDB == nil {
+		return models.HistoricalAverages{}, fmt.Errorf("stats database not available")
+	}
+	return ar.statsDB.GetContainerHistoricalAverages(host, containerID, time.Now())
+}
+
+func (ar *APIRouter) getContainerHistoricalSamples(host, containerID string) ([]models.ContainerStats, error) {
+	if ar.statsDB == nil {
+		return nil, fmt.Errorf("stats database not available")
+	}
+	return ar.statsDB.GetRecentContainerStats(
+		host,
+		containerID,
+		time.Now().Add(-12*time.Hour),
+		containerStatsBootstrapLimit,
+	)
+}
+
+func (ar *APIRouter) enrichContainersWithHistoricalStats(containers []models.ContainerInfo) {
+	if ar.statsDB == nil {
+		return
+	}
+
+	for i := range containers {
+		history, err := ar.getContainerHistoricalAverages(containers[i].Host, containers[i].ID)
+		if err != nil {
+			log.Printf("failed to load container history for %s on %s: %v", containers[i].ID, containers[i].Host, err)
+			continue
+		}
+		if history.HasData {
+			containers[i].HistoricalStats = &models.HistoricalStats{
+				CPU1h:     history.CPU1h,
+				Memory1h:  history.Memory1h,
+				CPU12h:    history.CPU12h,
+				Memory12h: history.Memory12h,
+			}
+		}
 	}
 }
 
@@ -59,8 +143,8 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
-	defer releaseDocker()
 	if dockerClient == nil {
+		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -76,6 +160,8 @@ func (ar *APIRouter) GetContainers(w http.ResponseWriter, r *http.Request) {
 	for _, containers := range containersMap {
 		allContainers = append(allContainers, containers...)
 	}
+
+	ar.enrichContainersWithHistoricalStats(allContainers)
 
 	// Build host errors list for the frontend (graceful partial results)
 	hostErrorMessages := make([]map[string]string, 0, len(hostErrors))
@@ -214,13 +300,13 @@ func (ar *APIRouter) StopContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := dockerClient.StopContainer(r.Context(), host, id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"message": "Container stopped",
+	WriteJsonResponse(w, http.StatusAccepted, map[string]any{
+		"message": "Container stop initiated",
+		"status":  "pending",
+	})
+
+	ar.runAsyncContainerAction(host, id, "stop", func(ctx context.Context, client *docker.MultiHostClient) error {
+		return client.StopContainer(ctx, host, id)
 	})
 }
 
@@ -234,19 +320,19 @@ func (ar *APIRouter) RestartContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
-	defer releaseDocker()
 	if dockerClient == nil {
+		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	err := dockerClient.RestartContainer(r.Context(), host, id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"message": "Container restarted",
+	WriteJsonResponse(w, http.StatusAccepted, map[string]any{
+		"message": "Container restart initiated",
+		"status":  "pending",
+	})
+
+	ar.runAsyncContainerAction(host, id, "restart", func(ctx context.Context, client *docker.MultiHostClient) error {
+		return client.RestartContainer(ctx, host, id)
 	})
 }
 
@@ -260,20 +346,74 @@ func (ar *APIRouter) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dockerClient, releaseDocker := ar.registry.AcquireDocker()
-	defer releaseDocker()
 	if dockerClient == nil {
+		releaseDocker()
 		http.Error(w, "docker client unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	err := dockerClient.RemoveContainer(r.Context(), host, id)
+	WriteJsonResponse(w, http.StatusAccepted, map[string]any{
+		"message": "Container remove initiated",
+		"status":  "pending",
+	})
+
+	ar.runAsyncContainerAction(host, id, "remove", func(ctx context.Context, client *docker.MultiHostClient) error {
+		return client.RemoveContainer(ctx, host, id)
+	})
+}
+
+func (ar *APIRouter) GetContainerHistoricalStats(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	host := r.URL.Query().Get("host")
+
+	if host == "" {
+		http.Error(w, "host parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	if ar.statsDB == nil {
+		http.Error(w, "stats history not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	history, err := ar.getContainerHistoricalAverages(host, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	WriteJsonResponse(w, http.StatusOK, map[string]any{
-		"message": "Container removed",
-	})
+
+	samples, err := ar.getContainerHistoricalSamples(host, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	history.Samples = samples
+	WriteJsonResponse(w, http.StatusOK, history)
+}
+
+func (ar *APIRouter) runAsyncContainerAction(host, id, action string, fn func(context.Context, *docker.MultiHostClient) error) {
+	RecordActionJob(host, id, action, "pending", "")
+	go func() {
+		dockerClient, release := ar.registry.AcquireDocker()
+		defer release()
+
+		if dockerClient == nil {
+			log.Printf("failed to %s container %s on host %s: docker client unavailable", action, id, host)
+			RecordActionJob(host, id, action, "failed", "docker client unavailable")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+
+		if err := fn(ctx, dockerClient); err != nil {
+			log.Printf("failed to %s container %s on host %s: %v", action, id, host, err)
+			RecordActionJob(host, id, action, "failed", err.Error())
+		} else {
+			RecordActionJob(host, id, action, "success", "")
+		}
+	}()
 }
 
 func (ar *APIRouter) GetContainerLogsParsed(w http.ResponseWriter, r *http.Request) {

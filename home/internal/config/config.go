@@ -37,7 +37,34 @@ type AlertConfig struct {
 	CPUThreshold    float64       // 0-100, alert when exceeded
 	MemoryThreshold float64       // 0-100, alert when exceeded
 	CheckInterval   time.Duration // How often to check thresholds
+	AlertsFilter    string
 }
+
+type StatsConfig struct {
+	SampleInterval time.Duration
+}
+
+type BotConfig struct {
+	Enabled       bool
+	Mode          string
+	TelegramToken string
+	AllowedChatID string
+	PollInterval  time.Duration
+	Discord       DiscordBotConfig
+}
+
+type DiscordBotConfig struct {
+	Enabled          bool
+	BotToken         string
+	ApplicationID    string
+	GuildID          string
+	AllowedChannelID string
+}
+
+const (
+	BotModePolling  = "polling"
+	BotModeJWTRelay = "jwt-relay"
+)
 
 // ScannerConfig holds configuration for vulnerability scanning
 type ScannerConfig struct {
@@ -68,6 +95,8 @@ type Config struct {
 	DockerHosts  []DockerHost
 	CoolifyHosts []CoolifyHostConfig
 	Alerts       AlertConfig
+	Stats        StatsConfig
+	Bot          BotConfig
 	Scanner      ScannerConfig
 }
 
@@ -77,6 +106,8 @@ func NewConfig() *Config {
 	dockerHosts := parseDockerHosts()
 	coolifyHosts := parseCoolifyHostConfigs()
 	alertConfig := parseAlertConfig()
+	statsConfig := parseStatsConfig(alertConfig.CheckInterval)
+	botConfig := parseBotConfig()
 
 	// if we don't have any docker hosts, we should default back to
 	// the unix socket on the machine running vps-monitor.
@@ -103,6 +134,8 @@ func NewConfig() *Config {
 		DockerHosts:  dockerHosts,
 		CoolifyHosts: coolifyHosts,
 		Alerts:       alertConfig,
+		Stats:        statsConfig,
+		Bot:          botConfig,
 		Scanner:      scannerConfig,
 	}
 }
@@ -114,6 +147,7 @@ func parseAlertConfig() AlertConfig {
 		CPUThreshold:    80, // Default: 80%
 		MemoryThreshold: 90, // Default: 90%
 		CheckInterval:   30 * time.Second,
+		AlertsFilter:    "all",
 	}
 
 	if cpuStr := os.Getenv("ALERTS_CPU_THRESHOLD"); cpuStr != "" {
@@ -134,7 +168,73 @@ func parseAlertConfig() AlertConfig {
 		}
 	}
 
+	switch filter := strings.ToLower(strings.TrimSpace(os.Getenv("ALERTS_FILTER"))); filter {
+	case "", "all":
+		config.AlertsFilter = "all"
+	case "critical":
+		config.AlertsFilter = "critical"
+	default:
+		config.AlertsFilter = "all"
+	}
+
 	return config
+}
+
+func parseStatsConfig(alertsCheckInterval time.Duration) StatsConfig {
+	config := StatsConfig{
+		SampleInterval: alertsCheckInterval,
+	}
+
+	if intervalStr := strings.TrimSpace(os.Getenv("STATS_SAMPLE_INTERVAL")); intervalStr != "" {
+		if interval, err := time.ParseDuration(intervalStr); err == nil && interval > 0 {
+			config.SampleInterval = interval
+		}
+	}
+
+	return config
+}
+
+func parseBotConfig() BotConfig {
+	cfg := BotConfig{
+		Enabled:       os.Getenv("BOT_ENABLED") == "true",
+		Mode:          NormalizeBotMode(os.Getenv("BOT_MODE")),
+		TelegramToken: strings.TrimSpace(os.Getenv("BOT_TELEGRAM_TOKEN")),
+		AllowedChatID: strings.TrimSpace(os.Getenv("BOT_ALLOWED_CHAT_ID")),
+		PollInterval:  15 * time.Second,
+		Discord: DiscordBotConfig{
+			Enabled:          os.Getenv("BOT_DISCORD_ENABLED") == "true",
+			BotToken:         strings.TrimSpace(os.Getenv("BOT_DISCORD_TOKEN")),
+			ApplicationID:    strings.TrimSpace(os.Getenv("BOT_DISCORD_APPLICATION_ID")),
+			GuildID:          strings.TrimSpace(os.Getenv("BOT_DISCORD_GUILD_ID")),
+			AllowedChannelID: strings.TrimSpace(os.Getenv("BOT_DISCORD_ALLOWED_CHANNEL_ID")),
+		},
+	}
+
+	if intervalStr := strings.TrimSpace(os.Getenv("BOT_POLL_INTERVAL")); intervalStr != "" {
+		if interval, err := time.ParseDuration(intervalStr); err == nil && interval > 0 {
+			cfg.PollInterval = interval
+		}
+	}
+
+	if cfg.TelegramToken == "" || cfg.AllowedChatID == "" {
+		cfg.Enabled = false
+	}
+	if cfg.Discord.BotToken == "" || cfg.Discord.ApplicationID == "" || cfg.Discord.AllowedChannelID == "" {
+		cfg.Discord.Enabled = false
+	}
+
+	return cfg
+}
+
+func NormalizeBotMode(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "", BotModePolling:
+		return BotModePolling
+	case BotModeJWTRelay:
+		return BotModeJWTRelay
+	default:
+		return BotModePolling
+	}
 }
 
 func parseCoolifyHostConfigs() []CoolifyHostConfig {

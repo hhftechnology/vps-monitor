@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/auth"
+	"github.com/hhftechnology/vps-monitor/internal/bot"
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
@@ -74,6 +75,33 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 		authResp["passwordConfigured"] = fc.Auth.AdminPasswordHash != ""
 	}
 
+	botResp := map[string]any{
+		"source":                  sources.Bot,
+		"enabled":                 cfg.Bot.Enabled,
+		"mode":                    cfg.Bot.Mode,
+		"telegramTokenConfigured": false,
+		"allowedChatId":           cfg.Bot.AllowedChatID,
+		"relayPath":               "/api/v1/bot/relay/command",
+		"relayUsesAuth":           true,
+		"discord": map[string]any{
+			"enabled":          cfg.Bot.Discord.Enabled,
+			"botToken":         "",
+			"applicationId":    cfg.Bot.Discord.ApplicationID,
+			"guildId":          cfg.Bot.Discord.GuildID,
+			"allowedChannelId": cfg.Bot.Discord.AllowedChannelID,
+		},
+	}
+	if cfg.Bot.TelegramToken != "" || (fc.Bot != nil && fc.Bot.TelegramToken != "") {
+		botResp["telegramTokenConfigured"] = true
+	}
+	if discordResp, ok := botResp["discord"].(map[string]any); ok {
+		if sources.Bot == config.SourceEnv && cfg.Bot.Discord.BotToken != "" {
+			discordResp["botToken"] = secretMask
+		} else if fc.Bot != nil && fc.Bot.Discord != nil && fc.Bot.Discord.BotToken != "" {
+			discordResp["botToken"] = secretMask
+		}
+	}
+
 	WriteJsonResponse(w, http.StatusOK, map[string]any{
 		"dockerHosts": map[string]any{
 			"source": sources.DockerHosts,
@@ -88,6 +116,7 @@ func (ar *APIRouter) GetSettings(w http.ResponseWriter, r *http.Request) {
 			"value":  cfg.ReadOnly,
 		},
 		"auth": authResp,
+		"bot":  botResp,
 	})
 }
 
@@ -269,6 +298,173 @@ func (ar *APIRouter) UpdateAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJsonResponse(w, http.StatusOK, map[string]any{"message": "Auth settings updated"})
+}
+
+func (ar *APIRouter) UpdateBot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled       bool   `json:"enabled"`
+		Mode          string `json:"mode"`
+		TelegramToken string `json:"telegramToken"`
+		AllowedChatID string `json:"allowedChatId"`
+		Discord       *struct {
+			Enabled          bool   `json:"enabled"`
+			BotToken         string `json:"botToken"`
+			ApplicationID    string `json:"applicationId"`
+			GuildID          string `json:"guildId"`
+			AllowedChannelID string `json:"allowedChannelId"`
+		} `json:"discord,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	token := strings.TrimSpace(req.TelegramToken)
+	chatID := strings.TrimSpace(req.AllowedChatID)
+	mode := config.BotModePolling
+	if req.Mode != "" {
+		mode = config.NormalizeBotMode(req.Mode)
+	}
+
+	if token == secretMask {
+		fc := ar.manager.FileConfigSnapshot()
+		if fc.Bot == nil || fc.Bot.TelegramToken == "" {
+			http.Error(w, "no stored telegram token found; provide the actual token", http.StatusBadRequest)
+			return
+		}
+		token = fc.Bot.TelegramToken
+	}
+
+	if req.Enabled && (token == "" || chatID == "") {
+		http.Error(w, "telegramToken and allowedChatId are required when enabling bot", http.StatusBadRequest)
+		return
+	}
+	if req.Enabled && mode == config.BotModeJWTRelay {
+		authSvc := ar.registry.Auth()
+		if authSvc == nil || authSvc.IsDisabled() {
+			http.Error(w, "auth must be enabled before using jwt-relay bot mode", http.StatusConflict)
+			return
+		}
+	}
+
+	fc := ar.manager.FileConfigSnapshot()
+	nextBot := &config.FileBotConfig{
+		Enabled:       &req.Enabled,
+		Mode:          mode,
+		TelegramToken: token,
+		AllowedChatID: chatID,
+	}
+	if fc.Bot != nil && fc.Bot.Discord != nil {
+		existingDiscord := *fc.Bot.Discord
+		nextBot.Discord = &existingDiscord
+	}
+
+	if req.Discord != nil {
+		discordToken := strings.TrimSpace(req.Discord.BotToken)
+		if discordToken == secretMask {
+			if fc.Bot != nil && fc.Bot.Discord != nil && fc.Bot.Discord.BotToken != "" {
+				discordToken = fc.Bot.Discord.BotToken
+			} else {
+				http.Error(w, "no stored discord token found; provide the actual token", http.StatusBadRequest)
+				return
+			}
+		}
+
+		applicationID := strings.TrimSpace(req.Discord.ApplicationID)
+		guildID := strings.TrimSpace(req.Discord.GuildID)
+		channelID := strings.TrimSpace(req.Discord.AllowedChannelID)
+		if req.Discord.Enabled && (discordToken == "" || applicationID == "" || channelID == "") {
+			http.Error(w, "discord botToken, applicationId, and allowedChannelId are required when enabling Discord bot", http.StatusBadRequest)
+			return
+		}
+
+		nextBot.Discord = &config.FileDiscordBotConfig{
+			Enabled:          &req.Discord.Enabled,
+			BotToken:         discordToken,
+			ApplicationID:    applicationID,
+			GuildID:          guildID,
+			AllowedChannelID: channelID,
+		}
+	}
+
+	err := ar.manager.UpdateBotConfig(nextBot)
+	if err != nil {
+		http.Error(w, err.Error(), settingsErrorStatus(err))
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{"message": "Bot settings updated"})
+}
+
+func (ar *APIRouter) TestBot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TelegramToken string `json:"telegramToken"`
+		AllowedChatID string `json:"allowedChatId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	token := strings.TrimSpace(req.TelegramToken)
+	if token == secretMask {
+		fc := ar.manager.FileConfigSnapshot()
+		if fc.Bot == nil || fc.Bot.TelegramToken == "" {
+			http.Error(w, "no stored telegram token found; provide the actual token", http.StatusBadRequest)
+			return
+		}
+		token = fc.Bot.TelegramToken
+	}
+
+	svc := bot.NewService(ar.registry, ar.registry.Config().Bot)
+	if err := svc.SendTestMessage(r.Context(), token, strings.TrimSpace(req.AllowedChatID)); err != nil {
+		WriteJsonResponse(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Test message sent",
+	})
+}
+
+func (ar *APIRouter) TestDiscordBot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BotToken         string `json:"botToken"`
+		AllowedChannelID string `json:"allowedChannelId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	token := strings.TrimSpace(req.BotToken)
+	if token == secretMask {
+		fc := ar.manager.FileConfigSnapshot()
+		if fc.Bot != nil && fc.Bot.Discord != nil && fc.Bot.Discord.BotToken != "" {
+			token = fc.Bot.Discord.BotToken
+		} else {
+			http.Error(w, "no stored discord token found; provide the actual token", http.StatusBadRequest)
+			return
+		}
+	}
+
+	svc := bot.NewService(ar.registry, ar.registry.Config().Bot)
+	if err := svc.SendDiscordTestMessage(r.Context(), token, strings.TrimSpace(req.AllowedChannelID)); err != nil {
+		WriteJsonResponse(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	WriteJsonResponse(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Discord test message sent",
+	})
 }
 
 // TestDockerHost handles POST /api/v1/settings/test/docker-host.

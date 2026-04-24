@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestErrEnvironmentConfiguredSentinel ensures the sentinel error is defined and
@@ -712,5 +713,113 @@ func TestNewManagerSetsEnvSnapshotForResourceLimitVars(t *testing.T) {
 				t.Fatalf("expected ScannerSet=true when %s is set", varName)
 			}
 		})
+	}
+}
+
+func TestUpdateBotConfigPersistsAndMerges(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	enabled := true
+	if err := m.UpdateBotConfig(&FileBotConfig{
+		Enabled:       &enabled,
+		Mode:          BotModeJWTRelay,
+		TelegramToken: "token-1",
+		AllowedChatID: "chat-1",
+	}); err != nil {
+		t.Fatalf("UpdateBotConfig returned error: %v", err)
+	}
+
+	merged := m.Config()
+	if !merged.Bot.Enabled || merged.Bot.Mode != BotModeJWTRelay || merged.Bot.TelegramToken != "token-1" || merged.Bot.AllowedChatID != "chat-1" {
+		t.Fatalf("unexpected merged bot config: %+v", merged.Bot)
+	}
+	if m.Sources().Bot != SourceFile {
+		t.Fatalf("expected bot source to be file, got %s", m.Sources().Bot)
+	}
+}
+
+func TestDiscordBotEnvConfigParsesAndDisablesWhenIncomplete(t *testing.T) {
+	t.Setenv("BOT_DISCORD_ENABLED", "true")
+	t.Setenv("BOT_DISCORD_TOKEN", "discord-token")
+	t.Setenv("BOT_DISCORD_APPLICATION_ID", "app-1")
+	t.Setenv("BOT_DISCORD_ALLOWED_CHANNEL_ID", "")
+
+	cfg := NewConfig()
+	if cfg.Bot.Discord.Enabled {
+		t.Fatalf("expected incomplete discord bot config to be disabled: %+v", cfg.Bot.Discord)
+	}
+
+	t.Setenv("BOT_DISCORD_ALLOWED_CHANNEL_ID", "channel-1")
+	cfg = NewConfig()
+	if !cfg.Bot.Discord.Enabled {
+		t.Fatalf("expected complete discord bot config to be enabled: %+v", cfg.Bot.Discord)
+	}
+	if cfg.Bot.Discord.BotToken != "discord-token" || cfg.Bot.Discord.ApplicationID != "app-1" || cfg.Bot.Discord.AllowedChannelID != "channel-1" {
+		t.Fatalf("unexpected discord bot config: %+v", cfg.Bot.Discord)
+	}
+}
+
+func TestAlertFilterNormalizesSupportedValues(t *testing.T) {
+	t.Setenv("ALERTS_FILTER", " CRITICAL ")
+	cfg := NewConfig()
+	if cfg.Alerts.AlertsFilter != "critical" {
+		t.Fatalf("expected critical filter, got %q", cfg.Alerts.AlertsFilter)
+	}
+
+	t.Setenv("ALERTS_FILTER", "unexpected")
+	cfg = NewConfig()
+	if cfg.Alerts.AlertsFilter != "all" {
+		t.Fatalf("expected invalid filter to default to all, got %q", cfg.Alerts.AlertsFilter)
+	}
+}
+
+func TestStatsSampleIntervalFallsBackToAlertsInterval(t *testing.T) {
+	t.Setenv("ALERTS_CHECK_INTERVAL", "45s")
+	t.Setenv("STATS_SAMPLE_INTERVAL", "")
+	cfg := NewConfig()
+	if cfg.Stats.SampleInterval != 45*time.Second {
+		t.Fatalf("expected stats interval to fall back to alerts interval, got %s", cfg.Stats.SampleInterval)
+	}
+
+	t.Setenv("STATS_SAMPLE_INTERVAL", "2m")
+	cfg = NewConfig()
+	if cfg.Stats.SampleInterval != 2*time.Minute {
+		t.Fatalf("expected stats interval override, got %s", cfg.Stats.SampleInterval)
+	}
+}
+
+func TestUpdateBotConfigPersistsAndMergesDiscord(t *testing.T) {
+	m := &Manager{
+		envSnapshot: EnvSnapshot{},
+		envConfig:   NewConfig(),
+		filePath:    filepath.Join(t.TempDir(), "config.json"),
+	}
+	m.merged, m.sources = m.merge()
+
+	enabled := true
+	if err := m.UpdateBotConfig(&FileBotConfig{
+		Discord: &FileDiscordBotConfig{
+			Enabled:          &enabled,
+			BotToken:         "discord-token",
+			ApplicationID:    "app-1",
+			GuildID:          "guild-1",
+			AllowedChannelID: "channel-1",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateBotConfig returned error: %v", err)
+	}
+
+	merged := m.Config()
+	if !merged.Bot.Discord.Enabled ||
+		merged.Bot.Discord.BotToken != "discord-token" ||
+		merged.Bot.Discord.ApplicationID != "app-1" ||
+		merged.Bot.Discord.GuildID != "guild-1" ||
+		merged.Bot.Discord.AllowedChannelID != "channel-1" {
+		t.Fatalf("unexpected merged discord bot config: %+v", merged.Bot.Discord)
 	}
 }

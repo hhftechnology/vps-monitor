@@ -12,6 +12,7 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/config"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
 	"github.com/hhftechnology/vps-monitor/internal/models"
+	"github.com/hhftechnology/vps-monitor/internal/stats"
 )
 
 // Monitor handles background monitoring and alerting
@@ -20,22 +21,34 @@ type Monitor struct {
 	dockerMu sync.RWMutex
 	config   *config.AlertConfig
 	history  *AlertHistory
+	stats    *stats.HistoryManager
+	store    statsStore
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
 
 	// Track container states for detecting changes
 	containerStates map[string]string // key: host:containerID, value: state
 	statesMu        sync.RWMutex
+	statsRetention  time.Duration
+	lastPrune       time.Time
+}
+
+type statsStore interface {
+	InsertContainerStat(stat models.ContainerStats) error
+	PruneContainerStatsOlderThan(cutoff time.Time) error
 }
 
 // NewMonitor creates a new alert monitor
-func NewMonitor(dockerClient *docker.MultiHostClient, alertConfig *config.AlertConfig) *Monitor {
+func NewMonitor(dockerClient *docker.MultiHostClient, alertConfig *config.AlertConfig, store statsStore, statsRetention time.Duration) *Monitor {
 	return &Monitor{
 		docker:          dockerClient,
 		config:          alertConfig,
 		history:         NewAlertHistory(100), // Keep last 100 alerts
+		stats:           stats.NewHistoryManager(),
+		store:           store,
 		stopCh:          make(chan struct{}),
 		containerStates: make(map[string]string),
+		statsRetention:  statsRetention,
 	}
 }
 
@@ -53,11 +66,6 @@ func (m *Monitor) getDockerClient() *docker.MultiHostClient {
 
 // Start begins the background monitoring
 func (m *Monitor) Start() {
-	if !m.config.Enabled {
-		log.Println("Alert monitoring is disabled")
-		return
-	}
-
 	log.Printf("Starting alert monitor (interval: %s, CPU threshold: %.1f%%, Memory threshold: %.1f%%)",
 		m.config.CheckInterval, m.config.CPUThreshold, m.config.MemoryThreshold)
 
@@ -75,6 +83,10 @@ func (m *Monitor) Stop() {
 // GetHistory returns the alert history
 func (m *Monitor) GetHistory() *AlertHistory {
 	return m.history
+}
+
+func (m *Monitor) GetStatsHistory() *stats.HistoryManager {
+	return m.stats
 }
 
 // monitorLoop is the main monitoring loop
@@ -171,6 +183,10 @@ func (m *Monitor) checkContainerStates(ctx context.Context) {
 	for key := range m.containerStates {
 		if _, exists := currentContainers[key]; !exists {
 			delete(m.containerStates, key)
+			parts := strings.SplitN(key, ":", 2)
+			if len(parts) == 2 {
+				m.stats.CleanupContainer(parts[0], parts[1])
+			}
 		}
 	}
 }
@@ -196,6 +212,12 @@ func (m *Monitor) checkResourceThresholds(ctx context.Context) {
 			stats, err := dockerClient.GetContainerStatsOnce(ctx, hostName, ctr.ID)
 			if err != nil {
 				continue
+			}
+			m.stats.RecordStats(hostName, ctr.ID, *stats)
+			if m.store != nil {
+				if err := m.store.InsertContainerStat(*stats); err != nil {
+					log.Printf("Alert monitor: failed to persist stats for %s on %s: %v", ctr.ID, hostName, err)
+				}
 			}
 
 			containerName := ctr.ID[:12]
@@ -234,10 +256,22 @@ func (m *Monitor) checkResourceThresholds(ctx context.Context) {
 			}
 		}
 	}
+
+	if m.store != nil && m.statsRetention > 0 && (m.lastPrune.IsZero() || time.Since(m.lastPrune) >= time.Hour) {
+		if err := m.store.PruneContainerStatsOlderThan(time.Now().Add(-m.statsRetention)); err != nil {
+			log.Printf("Alert monitor: failed to prune persisted stats: %v", err)
+		} else {
+			m.lastPrune = time.Now()
+		}
+	}
 }
 
 // triggerAlert handles a new alert
 func (m *Monitor) triggerAlert(alert models.Alert) {
+	if !m.config.Enabled {
+		return
+	}
+
 	log.Printf("Alert: %s - %s", alert.Type, alert.Message)
 
 	// Add to history
@@ -245,6 +279,10 @@ func (m *Monitor) triggerAlert(alert models.Alert) {
 
 	// Send webhook
 	if m.config.WebhookURL != "" {
+		if m.config.AlertsFilter == "critical" && !isCriticalAlert(alert) {
+			return
+		}
+
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -254,4 +292,8 @@ func (m *Monitor) triggerAlert(alert models.Alert) {
 			}
 		}()
 	}
+}
+
+func isCriticalAlert(alert models.Alert) bool {
+	return alert.Type == models.AlertCPUThreshold || alert.Type == models.AlertMemoryThreshold
 }

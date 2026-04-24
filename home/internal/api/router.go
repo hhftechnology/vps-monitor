@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -19,6 +20,10 @@ import (
 	"github.com/hhftechnology/vps-monitor/internal/static"
 )
 
+type botRelayService interface {
+	RelayCommand(ctx context.Context, chatID, text string) (string, error)
+}
+
 // Buffer pool for JSON encoding to reduce allocations
 var jsonBufferPool = sync.Pool{
 	New: func() interface{} {
@@ -32,6 +37,8 @@ type APIRouter struct {
 	manager       *config.Manager
 	alertHandlers *AlertHandlers
 	scanHandlers  *ScanHandlers
+	botService    botRelayService
+	statsDB       *scanner.ScanDB
 }
 
 // RouterOptions contains optional dependencies for the router
@@ -39,6 +46,8 @@ type RouterOptions struct {
 	AlertMonitor   *alerts.Monitor
 	ScannerService *scanner.ScannerService
 	AutoScanner    *scanner.AutoScanner
+	BotService     botRelayService
+	ScanDB         *scanner.ScanDB
 }
 
 func NewRouter(registry *services.Registry, manager *config.Manager, opts *RouterOptions) *chi.Mux {
@@ -48,6 +57,13 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 		router:   chi.NewRouter(),
 		registry: registry,
 		manager:  manager,
+	}
+	if opts != nil {
+		r.botService = opts.BotService
+		r.statsDB = opts.ScanDB
+		if r.statsDB == nil && opts.ScannerService != nil {
+			r.statsDB = opts.ScannerService.Store().DB()
+		}
 	}
 
 	// Set up scan handlers
@@ -68,6 +84,7 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 			MemoryThreshold: cfg.Alerts.MemoryThreshold,
 			CheckInterval:   cfg.Alerts.CheckInterval.String(),
 			WebhookEnabled:  cfg.Alerts.WebhookURL != "",
+			AlertsFilter:    cfg.Alerts.AlertsFilter,
 		})
 	} else {
 		r.alertHandlers = NewAlertHandlers(nil, &models.AlertConfigResponse{
@@ -76,6 +93,7 @@ func NewRouter(registry *services.Registry, manager *config.Manager, opts *Route
 			MemoryThreshold: cfg.Alerts.MemoryThreshold,
 			CheckInterval:   cfg.Alerts.CheckInterval.String(),
 			WebhookEnabled:  cfg.Alerts.WebhookURL != "",
+			AlertsFilter:    cfg.Alerts.AlertsFilter,
 		})
 	}
 
@@ -128,6 +146,7 @@ func (ar *APIRouter) Routes() *chi.Mux {
 			ar.registerImageRoutes(protected)
 			ar.registerNetworkRoutes(protected)
 			ar.registerAlertRoutes(protected)
+			ar.registerBotRoutes(protected)
 			ar.registerScanRoutes(protected)
 		})
 	})
@@ -154,6 +173,7 @@ func (ar *APIRouter) registerContainerRoutes(r chi.Router) {
 		r.Get("/env", ar.GetEnvVariables)
 		r.Get("/stats", ar.HandleContainerStats)
 		r.Get("/stats/once", ar.GetContainerStatsOnce)
+		r.Get("/stats/history", ar.GetContainerHistoricalStats)
 
 		// Mutating routes (blocked in read-only mode)
 		r.Group(func(mutating chi.Router) {
@@ -205,6 +225,14 @@ func (ar *APIRouter) registerAlertRoutes(r chi.Router) {
 	r.Post("/alerts/acknowledge-all", ar.alertHandlers.AcknowledgeAllAlerts)
 }
 
+func (ar *APIRouter) registerBotRoutes(r chi.Router) {
+	if ar.botService == nil {
+		return
+	}
+
+	r.Post("/bot/relay/command", ar.RelayBotCommand)
+}
+
 func (ar *APIRouter) registerScanRoutes(r chi.Router) {
 	if ar.scanHandlers == nil {
 		return
@@ -249,12 +277,20 @@ func (ar *APIRouter) registerSettingsRoutes(r chi.Router) {
 		r.Use(auth.DynamicMiddleware(ar.registry.Auth))
 
 		r.Get("/", ar.GetSettings)
-		r.Put("/docker-hosts", ar.UpdateDockerHosts)
-		r.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
 		r.Put("/read-only", ar.UpdateReadOnly)
-		r.Put("/auth", ar.UpdateAuth)
 		r.Post("/test/docker-host", ar.TestDockerHost)
 		r.Post("/test/coolify-host", ar.TestCoolifyHost)
+		r.Group(func(mutating chi.Router) {
+			mutating.Use(middleware.ReadOnly(func() bool {
+				return ar.registry.Config().ReadOnly
+			}))
+			mutating.Post("/test/bot", ar.TestBot)
+			mutating.Post("/test/discord-bot", ar.TestDiscordBot)
+			mutating.Put("/docker-hosts", ar.UpdateDockerHosts)
+			mutating.Put("/coolify-hosts", ar.UpdateCoolifyHosts)
+			mutating.Put("/auth", ar.UpdateAuth)
+			mutating.Put("/bot", ar.UpdateBot)
+		})
 		if ar.scanHandlers != nil {
 			r.Get("/scan", ar.scanHandlers.GetScannerConfig)
 			r.Group(func(mutating chi.Router) {

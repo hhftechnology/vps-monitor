@@ -4,11 +4,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/hhftechnology/vps-monitor/internal/alerts"
 	"github.com/hhftechnology/vps-monitor/internal/api"
 	"github.com/hhftechnology/vps-monitor/internal/auth"
+	"github.com/hhftechnology/vps-monitor/internal/bot"
 	"github.com/hhftechnology/vps-monitor/internal/config"
+	"github.com/hhftechnology/vps-monitor/internal/containerstats"
 	"github.com/hhftechnology/vps-monitor/internal/coolify"
 	"github.com/hhftechnology/vps-monitor/internal/docker"
 	"github.com/hhftechnology/vps-monitor/internal/models"
@@ -19,6 +22,8 @@ import (
 
 func main() {
 	system.Init()
+
+	const containerStatsRetention = 30 * 24 * time.Hour
 
 	manager := config.NewManager()
 	cfg := manager.Config()
@@ -65,25 +70,6 @@ func main() {
 		log.Println("Coolify integration is DISABLED")
 	}
 
-	// Alert monitor (vps-monitor specific)
-	var alertMonitor *alerts.Monitor
-	if cfg.Alerts.Enabled {
-		alertMonitor = alerts.NewMonitor(multiHostClient, &cfg.Alerts)
-		alertMonitor.Start()
-		defer alertMonitor.Stop()
-		log.Println("Alert monitoring is ENABLED")
-		log.Printf("   CPU threshold: %.1f%%, Memory threshold: %.1f%%, Check interval: %s",
-			cfg.Alerts.CPUThreshold, cfg.Alerts.MemoryThreshold, cfg.Alerts.CheckInterval)
-		if cfg.Alerts.WebhookURL != "" {
-			log.Println("   Webhook notifications are ENABLED")
-		}
-	} else {
-		log.Println("Alert monitoring is DISABLED")
-		log.Println("   To enable alerts, set: ALERTS_ENABLED=true")
-	}
-
-	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
-
 	// Scanner database
 	dbPath := "/data/scanner.db"
 	if v := os.Getenv("SCANNER_DB_PATH"); v != "" {
@@ -95,6 +81,36 @@ func main() {
 	}
 	defer scanDB.Close()
 	log.Printf("Scan database opened at %s", dbPath)
+
+	// Alert monitor / stats collection
+	// alertMonitor starts nil and is injected after creation when alerts are enabled.
+	var alertMonitor *alerts.Monitor
+	registry := services.NewRegistry(multiHostClient, coolifyClient, authService, cfg, alertMonitor)
+
+	var statsCollector *containerstats.Collector
+	if cfg.Alerts.Enabled {
+		alertMonitor = alerts.NewMonitor(multiHostClient, &cfg.Alerts, scanDB, containerStatsRetention)
+		registry.SwapAlerts(alertMonitor)
+		alertMonitor.Start()
+		defer alertMonitor.Stop()
+		log.Println("Alert monitoring is ENABLED")
+		log.Printf("   CPU threshold: %.1f%%, Memory threshold: %.1f%%, Check interval: %s",
+			cfg.Alerts.CPUThreshold, cfg.Alerts.MemoryThreshold, cfg.Alerts.CheckInterval)
+		if cfg.Alerts.WebhookURL != "" {
+			log.Println("   Webhook notifications are ENABLED")
+		}
+	} else {
+		statsCollector = containerstats.NewCollector(registry, scanDB, cfg.Stats.SampleInterval, containerStatsRetention)
+		statsCollector.Start()
+		defer statsCollector.Stop()
+		log.Println("Alert monitoring is DISABLED")
+		log.Println("   Background container stats collection remains ENABLED")
+		log.Println("   To enable alerts, set: ALERTS_ENABLED=true")
+	}
+
+	telegramBot := bot.NewService(registry, cfg.Bot)
+	telegramBot.Start()
+	defer telegramBot.Stop()
 
 	// Build initial scanner config from env, then load/merge with DB settings
 	envScannerCfg := configToScannerConfig(cfg.Scanner)
@@ -162,11 +178,15 @@ func main() {
 			autoScanner.Stop()
 		}
 
+		telegramBot.UpdateConfig(newCfg.Bot)
+
 		log.Println("Configuration reloaded successfully")
 	})
 
 	routerOpts := &api.RouterOptions{
 		AlertMonitor:   alertMonitor,
+		BotService:     telegramBot,
+		ScanDB:         scanDB,
 		ScannerService: scannerService,
 		AutoScanner:    autoScanner,
 	}

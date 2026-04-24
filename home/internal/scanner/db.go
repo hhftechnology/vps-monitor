@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const maxContainerStatsLimit = 1440
+
 // ScanDB manages the SQLite database for persisting scan results and settings.
 type ScanDB struct {
 	db *sql.DB
@@ -183,6 +185,25 @@ CREATE TABLE IF NOT EXISTS image_sbom_state (
     last_sbom_id TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (host, image_ref, format)
 );
+
+CREATE TABLE IF NOT EXISTS container_stats (
+    host           TEXT NOT NULL,
+    container_id   TEXT NOT NULL,
+    timestamp      INTEGER NOT NULL,
+    cpu_percent    REAL NOT NULL DEFAULT 0,
+    memory_percent REAL NOT NULL DEFAULT 0,
+    memory_usage   INTEGER NOT NULL DEFAULT 0,
+    memory_limit   INTEGER NOT NULL DEFAULT 0,
+    network_rx     INTEGER NOT NULL DEFAULT 0,
+    network_tx     INTEGER NOT NULL DEFAULT 0,
+    block_read     INTEGER NOT NULL DEFAULT 0,
+    block_write    INTEGER NOT NULL DEFAULT 0,
+    pids           INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (host, container_id, timestamp)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cs_host_container_time ON container_stats(host, container_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_cs_timestamp ON container_stats(timestamp);
 
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
@@ -858,6 +879,145 @@ func (s *ScanDB) CanRegenerateSBOM(host, imageRef, format, currentImageID string
 		return true, nil
 	}
 	return state.ImageID != currentImageID, nil
+}
+
+// InsertContainerStat stores a single container stats sample.
+func (s *ScanDB) InsertContainerStat(stat models.ContainerStats) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO container_stats (
+		host, container_id, timestamp, cpu_percent, memory_percent,
+		memory_usage, memory_limit, network_rx, network_tx,
+		block_read, block_write, pids
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		stat.Host,
+		stat.ContainerID,
+		stat.Timestamp,
+		stat.CPUPercent,
+		stat.MemoryPercent,
+		stat.MemoryUsage,
+		stat.MemoryLimit,
+		stat.NetworkRx,
+		stat.NetworkTx,
+		stat.BlockRead,
+		stat.BlockWrite,
+		stat.PIDs,
+	)
+	return err
+}
+
+// GetContainerHistoricalAverages returns 1h and 12h averages for a container.
+func (s *ScanDB) GetContainerHistoricalAverages(host, containerID string, now time.Time) (models.HistoricalAverages, error) {
+	var result models.HistoricalAverages
+
+	since1h := now.Add(-time.Hour).Unix()
+	since12h := now.Add(-12 * time.Hour).Unix()
+	var count1h int
+	var count12h int
+
+	err := s.db.QueryRow(`
+		SELECT
+			COALESCE(AVG(CASE WHEN timestamp >= ? THEN cpu_percent END), 0),
+			COALESCE(AVG(CASE WHEN timestamp >= ? THEN memory_percent END), 0),
+			COALESCE(AVG(cpu_percent), 0),
+			COALESCE(AVG(memory_percent), 0),
+			COUNT(CASE WHEN timestamp >= ? THEN 1 END),
+			COUNT(*)
+		FROM container_stats
+		WHERE host = ? AND container_id = ? AND timestamp >= ?`,
+		since1h,
+		since1h,
+		since1h,
+		host,
+		containerID,
+		since12h,
+	).Scan(
+		&result.CPU1h,
+		&result.Memory1h,
+		&result.CPU12h,
+		&result.Memory12h,
+		&count1h,
+		&count12h,
+	)
+	if err != nil {
+		return models.HistoricalAverages{}, err
+	}
+
+	if count1h == 0 {
+		result.CPU1h = 0
+		result.Memory1h = 0
+	}
+	if count12h == 0 {
+		result.CPU12h = 0
+		result.Memory12h = 0
+	}
+	result.HasData = count1h > 0 || count12h > 0
+
+	return result, nil
+}
+
+// GetRecentContainerStats returns recent samples in ascending timestamp order.
+func (s *ScanDB) GetRecentContainerStats(host, containerID string, since time.Time, limit int) ([]models.ContainerStats, error) {
+	if limit <= 0 {
+		return []models.ContainerStats{}, nil
+	}
+	if limit > maxContainerStatsLimit {
+		limit = maxContainerStatsLimit
+	}
+
+	rows, err := s.db.Query(`
+		SELECT host, container_id, cpu_percent, memory_usage, memory_limit,
+			memory_percent, network_rx, network_tx, block_read, block_write, pids, timestamp
+		FROM (
+			SELECT host, container_id, cpu_percent, memory_usage, memory_limit,
+				memory_percent, network_rx, network_tx, block_read, block_write, pids, timestamp
+			FROM container_stats
+			WHERE host = ? AND container_id = ? AND timestamp >= ?
+			ORDER BY timestamp DESC
+			LIMIT ?
+		)
+		ORDER BY timestamp ASC`,
+		host,
+		containerID,
+		since.Unix(),
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	samples := make([]models.ContainerStats, 0, limit)
+	for rows.Next() {
+		var stat models.ContainerStats
+		if err := rows.Scan(
+			&stat.Host,
+			&stat.ContainerID,
+			&stat.CPUPercent,
+			&stat.MemoryUsage,
+			&stat.MemoryLimit,
+			&stat.MemoryPercent,
+			&stat.NetworkRx,
+			&stat.NetworkTx,
+			&stat.BlockRead,
+			&stat.BlockWrite,
+			&stat.PIDs,
+			&stat.Timestamp,
+		); err != nil {
+			return nil, err
+		}
+		samples = append(samples, stat)
+	}
+
+	if samples == nil {
+		samples = []models.ContainerStats{}
+	}
+
+	return samples, rows.Err()
+}
+
+// PruneContainerStatsOlderThan removes raw samples older than the cutoff.
+func (s *ScanDB) PruneContainerStatsOlderThan(cutoff time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM container_stats WHERE timestamp < ?`, cutoff.Unix())
+	return err
 }
 
 // --- Settings ---
