@@ -258,6 +258,8 @@ Generate password hash:
 
 ```bash
 # Format: echo -n "password+salt" | shasum -a 256
+
+[![Discuss on the HHF forum](https://img.shields.io/badge/discuss-forum.hhf.technology-5E35B1?logo=discourse&logoColor=white)](https://forum.hhf.technology/c/docker-deploy-tools/vps-monitor)
 echo -n "admin123mysalt" | shasum -a 256 | awk '{print $1}'
 ```
 
